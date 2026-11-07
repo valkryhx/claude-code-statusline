@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="972" height="88" viewBox="0 0 972 88" font-family="JetBrains Mono, Cascadia Mono, Consolas, DejaVu Sans Mono, monospace" font-size="13" role="img">
+<title>Claude Code status line, 41% of a 400k budget</title>
+<rect width="972" height="88" rx="6" fill="#1a1b26"/>
+<text x="22.0" y="35" fill="#c8ccd4" xml:space="preserve">moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   </text>
+<text x="599.2" y="35" fill="#767676" xml:space="preserve">│</text>
+<text x="607.0" y="35" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="630.4" y="35" fill="#94e2d5" xml:space="preserve" font-weight="700">main</text>
+<text x="661.6" y="35" fill="#c8ccd4" xml:space="preserve"> </text>
+<text x="669.4" y="35" fill="#0dbc79" xml:space="preserve">+216</text>
+<text x="700.6" y="35" fill="#c8ccd4" xml:space="preserve">/</text>
+<text x="708.4" y="35" fill="#cd3131" xml:space="preserve">-22</text>
+<text x="731.8" y="35" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="755.2" y="35" fill="#767676" xml:space="preserve">│</text>
+<text x="763.0" y="35" fill="#c8ccd4" xml:space="preserve">   ~/projects/my-project</text>
+<text x="22.0" y="57" fill="#ddf2fe" xml:space="preserve">█</text>
+<text x="29.8" y="57" fill="#d8f0fe" xml:space="preserve">█</text>
+<text x="37.6" y="57" fill="#d2edfe" xml:space="preserve">█</text>
+<text x="45.4" y="57" fill="#cdebfe" xml:space="preserve">█</text>
+<text x="53.2" y="57" fill="#c7e8fd" xml:space="preserve">█</text>
+<text x="61.0" y="57" fill="#c1e5fd" xml:space="preserve">█</text>
+<text x="68.8" y="57" fill="#bbe2fd" xml:space="preserve">█</text>
+<text x="76.6" y="57" fill="#b4dffd" xml:space="preserve">█</text>
+<text x="84.4" y="57" fill="#bad2e8" xml:space="preserve">░</text>
+<text x="92.2" y="57" fill="#b4cbe1" xml:space="preserve">░</text>
+<text x="100.0" y="57" fill="#aec5da" xml:space="preserve">░</text>
+<text x="107.8" y="57" fill="#a7bdd0" xml:space="preserve">░</text>
+<text x="115.6" y="57" fill="#a1b6c9" xml:space="preserve">░</text>
+<text x="123.4" y="57" fill="#9aaec0" xml:space="preserve">░</text>
+<text x="131.2" y="57" fill="#94a8b9" xml:space="preserve">░</text>
+<text x="139.0" y="57" fill="#8d9fb0" xml:space="preserve">░</text>
+<text x="146.8" y="57" fill="#8799a9" xml:space="preserve">░</text>
+<text x="154.6" y="57" fill="#8090a0" xml:space="preserve">░</text>
+<text x="162.4" y="57" fill="#7a8a99" xml:space="preserve">░</text>
+<text x="170.2" y="57" fill="#73828f" xml:space="preserve">░</text>
+<text x="178.0" y="57" fill="#c8ccd4" xml:space="preserve"> </text>
+<text x="185.8" y="57" fill="#cae8fd" xml:space="preserve">41%</text>
+<text x="209.2" y="57" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="232.6" y="57" fill="#767676" xml:space="preserve">│</text>
+<text x="240.4" y="57" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="263.8" y="57" fill="#c8ccd4" xml:space="preserve" font-weight="700">164</text>
+<text x="287.2" y="57" fill="#848a94" xml:space="preserve">k</text>
+<text x="295.0" y="57" fill="#c8ccd4" xml:space="preserve" fill-opacity="0.55">/</text>
+<text x="302.8" y="57" fill="#848a94" xml:space="preserve">400</text>
+<text x="326.2" y="57" fill="#848a94" xml:space="preserve">k</text>
+<text x="334.0" y="57" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="357.4" y="57" fill="#767676" xml:space="preserve">│</text>
+<text x="365.2" y="57" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="388.6" y="57" fill="#4a7482" xml:space="preserve">cache</text>
+<text x="427.6" y="57" fill="#c8ccd4" xml:space="preserve"> </text>
+<text x="435.4" y="57" fill="#b0e2f0" xml:space="preserve" font-weight="700">160.9</text>
+<text x="474.4" y="57" fill="#4a7482" xml:space="preserve">k</text>
+<text x="482.2" y="57" fill="#c8ccd4" xml:space="preserve">  </text>
+<text x="497.8" y="57" fill="#586094" xml:space="preserve">in</text>
+<text x="513.4" y="57" fill="#c8ccd4" xml:space="preserve"> </text>
+<text x="521.2" y="57" fill="#c6ccff" xml:space="preserve" font-weight="700">3.5</text>
+<text x="544.6" y="57" fill="#586094" xml:space="preserve">k</text>
+<text x="552.4" y="57" fill="#c8ccd4" xml:space="preserve">  </text>
+<text x="568.0" y="57" fill="#8c6a48" xml:space="preserve">out</text>
+<text x="591.4" y="57" fill="#c8ccd4" xml:space="preserve"> </text>
+<text x="599.2" y="57" fill="#fad4ac" xml:space="preserve" font-weight="700">420</text>
+<text x="622.6" y="57" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="646.0" y="57" fill="#767676" xml:space="preserve">│</text>
+<text x="653.8" y="57" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="677.2" y="57" fill="#767c86" xml:space="preserve">hit</text>
+<text x="700.6" y="57" fill="#c8ccd4" xml:space="preserve"> </text>
+<text x="708.4" y="57" fill="#23d18b" xml:space="preserve" font-weight="700">99</text>
+<text x="724.0" y="57" fill="#609660" xml:space="preserve">%</text>
+</svg>

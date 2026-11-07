@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1058" height="154" viewBox="0 0 1058 154" font-family="JetBrains Mono, Cascadia Mono, Consolas, DejaVu Sans Mono, monospace" font-size="13" role="img">
+<title>Line 1 as the terminal narrows</title>
+<rect width="1058" height="154" rx="6" fill="#1a1b26"/>
+<text x="22.0" y="35" fill="#767c86" xml:space="preserve"> 140 cols</text>
+<text x="92.2" y="35" fill="#c8ccd4" xml:space="preserve">  moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   </text>
+<text x="685.0" y="35" fill="#767676" xml:space="preserve">│</text>
+<text x="692.8" y="35" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="716.2" y="35" fill="#94e2d5" xml:space="preserve" font-weight="700">main</text>
+<text x="747.4" y="35" fill="#c8ccd4" xml:space="preserve"> </text>
+<text x="755.2" y="35" fill="#0dbc79" xml:space="preserve">+216</text>
+<text x="786.4" y="35" fill="#c8ccd4" xml:space="preserve">/</text>
+<text x="794.2" y="35" fill="#cd3131" xml:space="preserve">-22</text>
+<text x="817.6" y="35" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="841.0" y="35" fill="#767676" xml:space="preserve">│</text>
+<text x="848.8" y="35" fill="#c8ccd4" xml:space="preserve">   ~/projects/my-project</text>
+<text x="22.0" y="57" fill="#767c86" xml:space="preserve"> 100 cols</text>
+<text x="92.2" y="57" fill="#c8ccd4" xml:space="preserve">  moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   </text>
+<text x="685.0" y="57" fill="#767676" xml:space="preserve">│</text>
+<text x="692.8" y="57" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="716.2" y="57" fill="#94e2d5" xml:space="preserve" font-weight="700">main</text>
+<text x="747.4" y="57" fill="#c8ccd4" xml:space="preserve"> </text>
+<text x="755.2" y="57" fill="#0dbc79" xml:space="preserve">+216</text>
+<text x="786.4" y="57" fill="#c8ccd4" xml:space="preserve">/</text>
+<text x="794.2" y="57" fill="#cd3131" xml:space="preserve">-22</text>
+<text x="22.0" y="79" fill="#767c86" xml:space="preserve">  85 cols</text>
+<text x="92.2" y="79" fill="#c8ccd4" xml:space="preserve">  moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high   </text>
+<text x="599.2" y="79" fill="#767676" xml:space="preserve">│</text>
+<text x="607.0" y="79" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="630.4" y="79" fill="#94e2d5" xml:space="preserve" font-weight="700">main</text>
+<text x="661.6" y="79" fill="#c8ccd4" xml:space="preserve"> </text>
+<text x="669.4" y="79" fill="#0dbc79" xml:space="preserve">+216</text>
+<text x="700.6" y="79" fill="#c8ccd4" xml:space="preserve">/</text>
+<text x="708.4" y="79" fill="#cd3131" xml:space="preserve">-22</text>
+<text x="22.0" y="101" fill="#767c86" xml:space="preserve">  70 cols</text>
+<text x="92.2" y="101" fill="#c8ccd4" xml:space="preserve">  deepseek-v4.1-flash-1017   </text>
+<text x="318.4" y="101" fill="#767676" xml:space="preserve">│</text>
+<text x="326.2" y="101" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="349.6" y="101" fill="#94e2d5" xml:space="preserve" font-weight="700">main</text>
+<text x="380.8" y="101" fill="#c8ccd4" xml:space="preserve"> </text>
+<text x="388.6" y="101" fill="#0dbc79" xml:space="preserve">+216</text>
+<text x="419.8" y="101" fill="#c8ccd4" xml:space="preserve">/</text>
+<text x="427.6" y="101" fill="#cd3131" xml:space="preserve">-22</text>
+<text x="22.0" y="123" fill="#767c86" xml:space="preserve">  55 cols</text>
+<text x="92.2" y="123" fill="#c8ccd4" xml:space="preserve">  deepseek-v4.1-flash-1017   </text>
+<text x="318.4" y="123" fill="#767676" xml:space="preserve">│</text>
+<text x="326.2" y="123" fill="#c8ccd4" xml:space="preserve">   </text>
+<text x="349.6" y="123" fill="#94e2d5" xml:space="preserve" font-weight="700">main</text>
+<text x="380.8" y="123" fill="#c8ccd4" xml:space="preserve"> </text>
+<text x="388.6" y="123" fill="#0dbc79" xml:space="preserve">+216</text>
+<text x="419.8" y="123" fill="#c8ccd4" xml:space="preserve">/</text>
+<text x="427.6" y="123" fill="#cd3131" xml:space="preserve">-22</text>
+</svg>
