@@ -277,14 +277,14 @@ fi
 #         context figure on the left)
 # Unlike `114.8k/400k`, none of these are cumulative.
 io_parts=""
+if [ -n "$cache_read_tokens" ] && [ "$cache_read_tokens" != "null" ] && [ "$cache_read_tokens" != "0" ]; then
+  io_parts="cache $(fmt_k "$cache_read_tokens")"
+fi
 if [ -n "$in_tokens" ] && [ "$in_tokens" != "null" ]; then
-  io_parts="in $(fmt_k "$in_tokens")"
+  io_parts="${io_parts:+${io_parts} }in $(fmt_k "$in_tokens")"
 fi
 if [ -n "$out_tokens" ] && [ "$out_tokens" != "null" ]; then
   io_parts="${io_parts:+${io_parts} }out $(fmt_k "$out_tokens")"
-fi
-if [ -n "$cache_read_tokens" ] && [ "$cache_read_tokens" != "null" ] && [ "$cache_read_tokens" != "0" ]; then
-  io_parts="${io_parts:+${io_parts} }cache $(fmt_k "$cache_read_tokens")"
 fi
 
 # --- Output ---------------------------------------------------------------

@@ -5,7 +5,7 @@ answering, reasoning effort, git state, project path, and the context budget.
 
 ```
 moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   main +216/-22   D:/git_repos/my-project
-████████░░░░░░░░░░░░ 29%   114.8k/400k   in 3.5k out 420 cache 160.9k   warm 99%
+████████░░░░░░░░░░░░ 29%   114.8k/400k   cache 160.9k in 3.5k out 420   warm 99%
 ```
 
 | Element | Source |
@@ -17,7 +17,7 @@ moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   ma
 | Path | `.workspace.current_dir`, shortened to `~/...` when under `$HOME` |
 | Bar + `29%` | cumulative context ÷ budget (see below) |
 | `114.8k/400k` | same numbers in k, whole thousands without a decimal |
-| `in 3.5k out 113 cache 160.9k` | **per-call** input, output and cache reads of the last response |
+| `cache 160.9k in 3.5k out 420` | **per-call** cache reads, input and output of the last response |
 | `warm 99%` | `.prompt_cache.hit_ratio` — ≥95% green, 80–95% orange, below that red |
 
 Segments are joined with three spaces and empty ones drop out entirely, so a payload
@@ -34,10 +34,10 @@ These two figures are easy to confuse, and the payload names them ambiguously:
 | `context_window.current_usage.input_tokens` `+ cache_creation_input_tokens` | input the **last request** actually sent |
 | `context_window.current_usage.cache_read_input_tokens` | that request's cache reads |
 
-So `114.8k` cannot be compared with `out 420` — different scopes. `in`, `out` and
-`cache` are the trio that belong together, all from one API response. `in` sums fresh
+So `114.8k` cannot be compared with `out 420` — different scopes. `cache`, `in` and
+`out` are the trio that belong together, all from one API response. `in` sums fresh
 input plus cache creation; `cache` is the read portion, which is cheap but is most of
-the prompt, explaining why `in` looks small next to the cumulative figure on its left.
+the prompt, which is why `in` looks small next to the cumulative figure on its left.
 
 Based on [claude-hud](https://www.npmjs.com/package/claude-hud) 1.1.0 (MIT), with the
 defects fixed that are documented in
