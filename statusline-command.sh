@@ -53,12 +53,12 @@ cwd=$(jqr '.workspace.current_dir // .cwd // "."')
 effort=$(jqr '.effort.level // empty')
 thinking=$(jqr '.thinking.enabled // empty')
 
-model_str="🤖 ${model}"
+model_str="${model}"
 if [ -n "$effort" ]; then
   model_str="${model_str} · ${effort}"
 fi
 if [ "$thinking" = "true" ]; then
-  model_str="${model_str} 🧠"
+  model_str="${model_str} · thinking"
 fi
 
 branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -68,9 +68,9 @@ if [ -n "$branch" ]; then
   deleted=$(printf '%s' "$diff_stats" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+')
   [ -z "$added" ] && added=0
   [ -z "$deleted" ] && deleted=0
-  git_info="🌿 ${branch} ${green}+${added}${reset}/${red}-${deleted}${reset}"
+  git_info="${branch} ${green}+${added}${reset}/${red}-${deleted}${reset}"
 else
-  git_info="🌿 no git"
+  git_info="no git"
 fi
 
 # Project directory, shown relative to $HOME as ~/... when it lives there.
@@ -94,7 +94,7 @@ case "$cwd_posix" in
   "$home_posix"/*) dir_disp="~${cwd_posix#"$home_posix"}" ;;
   *)               dir_disp="$cwd_disp" ;;
 esac
-path_info="📁 ${dir_disp}"
+path_info="${dir_disp}"
 
 # --- Context budget --------------------------------------------------------
 # Claude Code's .context_window.context_window_size comes from its model
@@ -155,7 +155,7 @@ elif [ -n "$used_tokens" ] && [ "$used_tokens" != "null" ]; then
   tokens_str=$(printf ' %dk' $(( used_tokens / 1000 )))
 fi
 
-context_bar="💭 ${bar_color}${bar}${reset} ${used_int}%${dim}${tokens_str}${reset}"
+context_bar="${bar_color}${bar}${reset} ${used_int}%${dim}${tokens_str}${reset}"
 
 # --- Line 2: cost + reset (ccusage, cached 5 min) + cache health ----------
 cache_file="$HOME/.claude/ccusage-cache.json"
@@ -200,7 +200,7 @@ if [ -f "$cache_file" ]; then
   case "$cost_usd" in
     ''|*[!0-9.]*) cost_usd=0 ;;
   esac
-  cost_str=$(printf "💰 \$%.2f spent" "$cost_usd")
+  cost_str=$(printf "\$%.2f spent" "$cost_usd")
 
   end_time=$(printf '%s' "$active_block" | jq -r '.endTime // empty' 2>/dev/null)
   if [ -n "$end_time" ]; then
@@ -215,16 +215,16 @@ if [ -f "$cache_file" ]; then
     if [ "$diff_secs" -gt 0 ]; then
       hours=$(( diff_secs / 3600 ))
       mins=$(( (diff_secs % 3600) / 60 ))
-      time_str="⏱️  ${hours}h ${mins}m until reset"
+      time_str="${hours}h ${mins}m until reset"
     else
-      time_str="⏱️  resetting…"
+      time_str="resetting…"
     fi
   else
-    time_str="⏱️  —"
+    time_str="—"
   fi
 else
-  cost_str="💰 —"
-  time_str="⏱️  —"
+  cost_str="—"
+  time_str="—"
 fi
 
 # Prompt-cache health (319 statusLine payload: prompt_cache.*)
@@ -233,9 +233,9 @@ hit_ratio=$(jqr '.prompt_cache.hit_ratio // empty')
 cache_str=""
 if [ -n "$cache_health" ] && [ "$cache_health" != "null" ]; then
   if [ "$cache_health" = "true" ]; then
-    cache_str="${green}🗄 warm${reset}"
+    cache_str="${green}cache warm${reset}"
   else
-    cache_str="${yellow}🗄 cold${reset}"
+    cache_str="${yellow}cache cold${reset}"
   fi
   if [ -n "$hit_ratio" ] && [ "$hit_ratio" != "null" ]; then
     cache_str="${cache_str}${dim}$(printf '%s' "$hit_ratio" | awk '{printf " %.0f%%", $1*100}')${reset}"
@@ -243,10 +243,21 @@ if [ -n "$cache_health" ] && [ "$cache_health" != "null" ]; then
 fi
 
 # --- Output ---------------------------------------------------------------
-if [ -n "$cache_str" ]; then
-  printf '%s   %s   %s   %s\n' "${model_str}" "${git_info}" "${path_info}" "${context_bar}"
-  printf '%s   %s   %s\n' "${cost_str}" "${time_str}" "${cache_str}"
-else
-  printf '%s   %s   %s   %s\n' "${model_str}" "${git_info}" "${path_info}" "${context_bar}"
-  printf '%s   %s\n' "${cost_str}" "${time_str}"
-fi
+# Join non-empty segments with a separator so missing fields (empty payload,
+# no git, no effort) collapse instead of leaving blank gaps.
+line1=""
+for seg in "$model_str" "$git_info" "$path_info"; do
+  [ -z "$seg" ] && continue
+  line1="${line1:+${line1}   }${seg}"
+done
+line1="${line1:+${line1}   }${context_bar}"
+
+line2=""
+for seg in "$cost_str" "$time_str" "$cache_str"; do
+  [ -z "$seg" ] && continue
+  line2="${line2:+${line2}   }${seg}"
+done
+
+printf '%s\n' "$line1"
+[ -n "$line2" ] && printf '%s\n' "$line2"
+exit 0

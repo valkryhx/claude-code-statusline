@@ -4,21 +4,24 @@ A status line for [Claude Code](https://claude.ai/claude-code) showing model and
 reasoning effort, git diff, project path, context budget, spend and prompt-cache health.
 
 ```
-🤖 Opus 5 · high 🧠   🌿 main +216/-22   📁 D:/git_repos/my-project   💭 ████████░░░░░░░░░░░░ 29% 114.8k/400k
-💰 $10.93 spent   ⏱️  0h 34m until reset   🗄 warm 99%
+Opus 5 · high · thinking   main +216/-22   D:/git_repos/my-project   ████████░░░░░░░░░░░░ 29% 114.8k/400k
+$10.93 spent   0h 34m until reset   warm 99%
 ```
 
 | Element | Source |
 | --- | --- |
-| 🤖 Model | `.model.display_name` |
+| Model | `.model.display_name` |
 | `· high` | `.effort.level` — omitted when the model reports no effort |
-| 🧠 | `.thinking.enabled` — shown only when extended thinking is on |
-| 🌿 Branch / diff | `git rev-parse` + `git diff --shortstat` |
-| 📁 Path | `.workspace.current_dir`, shortened to `~/...` when under `$HOME` |
-| 💭 Context bar | `.context_window.total_input_tokens` ÷ budget (see below) |
-| 💰 Spend | `ccusage blocks --json`, cached 5 min |
-| ⏱️ Reset | active block's `endTime` |
-| 🗄 Cache | `.prompt_cache.warm` / `.hit_ratio` |
+| `· thinking` | `.thinking.enabled` — shown only when extended thinking is on |
+| Branch / diff | `git rev-parse` + `git diff --shortstat` |
+| Path | `.workspace.current_dir`, shortened to `~/...` when under `$HOME` |
+| Context bar | `.context_window.total_input_tokens` ÷ budget (see below) |
+| Spend | `ccusage blocks --json`, cached 5 min |
+| Reset | active block's `endTime` |
+| Cache | `.prompt_cache.warm` / `.hit_ratio` |
+
+Segments are joined with three spaces and empty ones drop out entirely, so a payload
+missing a field collapses the gap instead of leaving blank columns.
 
 Based on [claude-hud](https://www.npmjs.com/package/claude-hud) 1.1.0 (MIT), with three
 defects fixed. Read [Troubleshooting](#troubleshooting) before debugging a blank status
@@ -117,9 +120,9 @@ echo '{"model":{"display_name":"Test"},"effort":{"level":"high"},"thinking":{"en
 echo "exit=$?"
 ```
 
-The rendered model segment should read `🤖 Test · high 🧠`. If the effort and brain
-glyphs are missing, the payload lacks `.effort.level` / `.thinking.enabled` — both are
-optional and omitted on models without reasoning support.
+The rendered model segment should read `Test · high · thinking`. If the effort and
+thinking suffixes are missing, the payload lacks `.effort.level` / `.thinking.enabled` —
+both are optional and omitted on models without reasoning support.
 
 ### Step 4: Verify the JSON is still valid
 
@@ -154,9 +157,9 @@ fail silently.
 | **B.** Blanks intermittently; `stat: File: ... Namelen: ...` and `syntax error in expression` on stderr | GNU `stat` accepts `-f` and exits 0, so the BSD-path fallback never fires | [docs §2](docs/why-the-context-bar-was-wrong.md#2-stat--f-m-swallows-the-fallback-on-gnu-systems) |
 | **C.** Percentage looks too low against your configured budget; shows 11% when ~29% is used | Bar divides by catalog `context_window_size`, not the auto-compact window | [docs §3](docs/why-the-context-bar-was-wrong.md#3-context_window_size-is-not-your-budget) |
 | **D.** `jq: command not found` in stderr, model and context fields blank | jq missing, or not on the PATH CC hands to the subprocess | [docs §1](docs/why-the-context-bar-was-wrong.md#1-the-command-silently-does-nothing-on-windows) |
-| **E.** `💰 —` and `⏱️ —` | ccusage missing, or it produced no parseable `blocks` output | [README → Install](#step-1-verify-prerequisites) |
+| **E.** Spend shows `—` | ccusage missing, or it produced no parseable `blocks` output | [README → Install](#step-1-verify-prerequisites) |
 | **F.** Nothing renders and nothing on stderr either | `settings.json` invalid, `statusLine` key wrong, or CC not restarted | [Step 4](#step-4-verify-the-json-is-still-valid) |
-| **G.** No `· high` / 🧠 next to the model | `.effort.level` or `.thinking.enabled` absent from the payload — expected on models without reasoning effort, or with thinking off | [payload capture](#capture-the-real-payload) |
+| **G.** No `· high` / `· thinking` next to the model | `.effort.level` or `.thinking.enabled` absent from the payload — expected on models without reasoning effort, or with thinking off | [payload capture](#capture-the-real-payload) |
 
 ### Capture the real payload
 
