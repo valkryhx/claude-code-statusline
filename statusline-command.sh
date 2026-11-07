@@ -43,9 +43,23 @@ dim=$'\033[2m'
 
 jqr() { printf '%s' "$input" | jq -r "$1" 2>/dev/null; }
 
-# --- Line 1: model + git + context ----------------------------------------
+# --- Line 1: model + git + path + context ---------------------------------
 model=$(jqr '.model.display_name // "Unknown"')
 cwd=$(jqr '.workspace.current_dir // .cwd // "."')
+
+# Reasoning effort and extended thinking. Both are optional in the payload:
+# `effort` is absent on models without reasoning effort, `thinking` is always
+# present but only meaningful when enabled.
+effort=$(jqr '.effort.level // empty')
+thinking=$(jqr '.thinking.enabled // empty')
+
+model_str="🤖 ${model}"
+if [ -n "$effort" ]; then
+  model_str="${model_str} · ${effort}"
+fi
+if [ "$thinking" = "true" ]; then
+  model_str="${model_str} 🧠"
+fi
 
 branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null)
 if [ -n "$branch" ]; then
@@ -58,6 +72,29 @@ if [ -n "$branch" ]; then
 else
   git_info="🌿 no git"
 fi
+
+# Project directory, shown relative to $HOME as ~/... when it lives there.
+# CC sends native separators on Windows (D:\repo\x), while Git Bash's $HOME is a
+# posix path (/c/Users/...). Keep two forms: `disp` is what we print (just
+# separators normalised, drive letter intact), `posix` adds the /x drive prefix
+# so it can be compared against $HOME.
+slashify() { printf '%s' "$1" | tr '\\' '/'; }
+to_posix() {
+  p=$(slashify "$1")
+  case "$p" in
+    [A-Za-z]:/*) printf '/%s%s' "$(printf '%s' "${p%%:*}" | tr 'A-Z' 'a-z')" "${p#?:}" ;;
+    *)           printf '%s' "$p" ;;
+  esac
+}
+cwd_disp=$(slashify "$cwd")
+cwd_posix=$(to_posix "$cwd")
+home_posix=$(to_posix "$HOME")
+case "$cwd_posix" in
+  "$home_posix")   dir_disp="~" ;;
+  "$home_posix"/*) dir_disp="~${cwd_posix#"$home_posix"}" ;;
+  *)               dir_disp="$cwd_disp" ;;
+esac
+path_info="📁 ${dir_disp}"
 
 # --- Context budget --------------------------------------------------------
 # Claude Code's .context_window.context_window_size comes from its model
@@ -207,9 +244,9 @@ fi
 
 # --- Output ---------------------------------------------------------------
 if [ -n "$cache_str" ]; then
-  printf '%s   %s   %s\n' "🤖 ${model}" "${git_info}" "${context_bar}"
+  printf '%s   %s   %s   %s\n' "${model_str}" "${git_info}" "${path_info}" "${context_bar}"
   printf '%s   %s   %s\n' "${cost_str}" "${time_str}" "${cache_str}"
 else
-  printf '%s   %s   %s\n' "🤖 ${model}" "${git_info}" "${context_bar}"
+  printf '%s   %s   %s   %s\n' "${model_str}" "${git_info}" "${path_info}" "${context_bar}"
   printf '%s   %s\n' "${cost_str}" "${time_str}"
 fi

@@ -1,12 +1,24 @@
 # claude-code-statusline
 
-A status line for [Claude Code](https://claude.ai/claude-code) showing model, git diff,
-context budget, spend and prompt-cache health.
+A status line for [Claude Code](https://claude.ai/claude-code) showing model and
+reasoning effort, git diff, project path, context budget, spend and prompt-cache health.
 
 ```
-🤖 Opus 5   🌿 main +216/-22   💭 ████████░░░░░░░░░░░░ 29% 114.8k/400k
+🤖 Opus 5 · high 🧠   🌿 main +216/-22   📁 D:/git_repos/my-project   💭 ████████░░░░░░░░░░░░ 29% 114.8k/400k
 💰 $10.93 spent   ⏱️  0h 34m until reset   🗄 warm 99%
 ```
+
+| Element | Source |
+| --- | --- |
+| 🤖 Model | `.model.display_name` |
+| `· high` | `.effort.level` — omitted when the model reports no effort |
+| 🧠 | `.thinking.enabled` — shown only when extended thinking is on |
+| 🌿 Branch / diff | `git rev-parse` + `git diff --shortstat` |
+| 📁 Path | `.workspace.current_dir`, shortened to `~/...` when under `$HOME` |
+| 💭 Context bar | `.context_window.total_input_tokens` ÷ budget (see below) |
+| 💰 Spend | `ccusage blocks --json`, cached 5 min |
+| ⏱️ Reset | active block's `endTime` |
+| 🗄 Cache | `.prompt_cache.warm` / `.hit_ratio` |
 
 Based on [claude-hud](https://www.npmjs.com/package/claude-hud) 1.1.0 (MIT), with three
 defects fixed. Read [Troubleshooting](#troubleshooting) before debugging a blank status
@@ -100,10 +112,14 @@ On Windows, **backslashes and unquoted paths both fail** — see
 Verify — **expected: exit 0 and two non-empty lines**:
 
 ```bash
-echo '{"model":{"display_name":"Test"},"workspace":{"current_dir":"'"$PWD"'"},"context_window":{"total_input_tokens":1000,"context_window_size":200000}}' \
+echo '{"model":{"display_name":"Test"},"effort":{"level":"high"},"thinking":{"enabled":true},"workspace":{"current_dir":"'"$PWD"'"},"context_window":{"total_input_tokens":1000,"context_window_size":200000}}' \
   | bash "C:/Users/<you>/.claude/statusline-command.sh"
 echo "exit=$?"
 ```
+
+The rendered model segment should read `🤖 Test · high 🧠`. If the effort and brain
+glyphs are missing, the payload lacks `.effort.level` / `.thinking.enabled` — both are
+optional and omitted on models without reasoning support.
 
 ### Step 4: Verify the JSON is still valid
 
@@ -140,6 +156,7 @@ fail silently.
 | **D.** `jq: command not found` in stderr, model and context fields blank | jq missing, or not on the PATH CC hands to the subprocess | [docs §1](docs/why-the-context-bar-was-wrong.md#1-the-command-silently-does-nothing-on-windows) |
 | **E.** `💰 —` and `⏱️ —` | ccusage missing, or it produced no parseable `blocks` output | [README → Install](#step-1-verify-prerequisites) |
 | **F.** Nothing renders and nothing on stderr either | `settings.json` invalid, `statusLine` key wrong, or CC not restarted | [Step 4](#step-4-verify-the-json-is-still-valid) |
+| **G.** No `· high` / 🧠 next to the model | `.effort.level` or `.thinking.enabled` absent from the payload — expected on models without reasoning effort, or with thinking off | [payload capture](#capture-the-real-payload) |
 
 ### Capture the real payload
 
@@ -159,7 +176,7 @@ printf '%s' "$input" > "$HOME/.claude/statusline-last-input.json"   # temporary
 Fields worth checking first:
 
 ```bash
-jq '.context_window, .model, .prompt_cache' ~/.claude/statusline-last-input.json
+jq '.context_window, .effort, .thinking, .model, .workspace.current_dir, .prompt_cache' ~/.claude/statusline-last-input.json
 ```
 
 Remove the capture block once done.
