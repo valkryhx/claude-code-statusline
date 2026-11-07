@@ -4,8 +4,8 @@ A status line for [Claude Code](https://claude.ai/claude-code): which model is a
 answering, reasoning effort, git state, project path, and the context budget.
 
 ```
-moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   main +216/-22   D:/git_repos/my-project
-████████░░░░░░░░░░░░ 29%   114.8k/400k   cache 160.9k in 3.5k out 420   warm 99%
+moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   │   main +216/-22   │   D:/git_repos/my-project
+████████░░░░░░░░░░░░ 29%   │   114.8k/400k   │   cache 160.9k  in 3.5k  out 420   │   warm 99%
 ```
 
 | Element | Source |
@@ -20,8 +20,37 @@ moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   ma
 | `cache 160.9k in 3.5k out 420` | **per-call** cache reads, input and output of the last response |
 | `warm 99%` | `.prompt_cache.hit_ratio` — ≥95% green, 80–95% orange, below that red |
 
-Segments are joined with three spaces and empty ones drop out entirely, so a payload
-missing a field collapses the gap instead of leaving blank columns.
+### Visual structure
+
+Two rows, two jobs: line 1 is **identity** (what session you are in), line 2 is the
+**context budget** (what moves turn to turn).
+
+- Groups are separated by a dim `│` rule rather than whitespace alone. At three
+  spaces apart, "next field" and "next group" read the same; the rule costs one glyph
+  and states the boundary. It is coloured `90` (bright black), not `2` (dim) — dimmed,
+  it smears into the surrounding spaces.
+- Field labels (`cache`, `in`, `out`) are dim and their values stay bright, so the row
+  scans as numbers instead of words. The `k` unit is uniform and `/` is dimmed.
+- Empty fields drop out entirely, so a payload missing one collapses the gap rather
+  than leaving a blank column.
+
+### Narrow terminals
+
+Line 1 degrades in steps as `$COLUMNS` shrinks, shedding the least identifying part
+first. Nothing is ever truncated mid-word — a mangled model name would defeat the
+row's purpose, so whole fields yield instead:
+
+| Columns | Line 1 shows |
+| --- | --- |
+| ≥ 100 | model route · effort · thinking │ branch │ path |
+| ~85 | drops `· thinking` |
+| ~75 | drops effort too |
+| ~70 | drops the provider half of `a → b`, keeps the answered model |
+| < 60 | drops the branch, leaves the model alone |
+
+Line 2 loses its detail groups before line 1 loses its identity: below 100 columns the
+per-call trio (`cache in out`) goes, below 80 the cache figure goes, leaving the bar
+and its token count.
 
 The bar is a **per-cell gradient**: each filled cell takes its colour from its own
 position, so the leading cell already shows the level and the trail behind it shows how

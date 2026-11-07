@@ -40,6 +40,14 @@ green=$'\033[32m'
 yellow=$'\033[33m'
 red=$'\033[31m'
 dim=$'\033[2m'
+# Secondary tone for units and labels. Dim alone disappears on some terminals;
+# pairing it with the terminal's own foreground keeps it readable while still
+# receding behind the values it annotates.
+faint=$'\033[2m'
+# A thin vertical rule between groups. Deliberately not dimmed: at 2m it reads
+# as a smudge between two runs of spaces rather than as a boundary, which is
+# worse than no rule at all.
+sep=$'\033[90m│\033[0m'
 
 # One jq invocation for every payload field. Each separate `jq` call costs a
 # full process start (~100ms on Windows) and this script re-runs every
@@ -297,7 +305,7 @@ fmt_k() {
 ctx_parts=""
 if [ -n "$used_tokens" ] && [ "$used_tokens" != "null" ]; then
   if [ -n "$budget" ] && [ "$budget" -gt 0 ] 2>/dev/null; then
-    ctx_parts="$(fmt_k "$used_tokens")/$(fmt_k "$budget")"
+    ctx_parts="$(fmt_k "$used_tokens")${dim}/${reset}$(fmt_k "$budget")"
   else
     ctx_parts="$(fmt_k "$used_tokens")"
   fi
@@ -306,36 +314,118 @@ fi
 # Per-call token accounting, all from `current_usage` (one API response):
 #   in    fresh input + cache creation -- what the request actually paid to send
 #   out   output of that same response
-#   read  cache reads served for that request (cheap, but it is most of the
+#   cache cache reads served for that request (cheap, but it is most of the
 #         prompt, so it explains why `in` looks small next to the cumulative
 #         context figure on the left)
 # Unlike `114.8k/400k`, none of these are cumulative.
+#
+# Labels recede and values stay bright, so the row scans as numbers rather than
+# as words. The units are uniform ("k") and the labels are all three letters
+# wide except `out`, which keeps the columns from shifting as values change.
 io_parts=""
 if [ -n "$cache_read_tokens" ] && [ "$cache_read_tokens" != "null" ] && [ "$cache_read_tokens" != "0" ]; then
-  io_parts="cache $(fmt_k "$cache_read_tokens")"
+  io_parts="${dim}cache${reset} $(fmt_k "$cache_read_tokens")"
 fi
 if [ -n "$in_tokens" ] && [ "$in_tokens" != "null" ]; then
-  io_parts="${io_parts:+${io_parts} }in $(fmt_k "$in_tokens")"
+  io_parts="${io_parts:+${io_parts}  }${dim}in${reset} $(fmt_k "$in_tokens")"
 fi
 if [ -n "$out_tokens" ] && [ "$out_tokens" != "null" ]; then
-  io_parts="${io_parts:+${io_parts} }out $(fmt_k "$out_tokens")"
+  io_parts="${io_parts:+${io_parts}  }${dim}out${reset} $(fmt_k "$out_tokens")"
 fi
 
 # --- Output ---------------------------------------------------------------
-# Line 1 carries the identity of the session: model, branch, directory.
-# Line 2 carries the context budget -- the bar plus its numbers -- because that
-# is what changes turn to turn and deserves the room.
-line1=""
-for seg in "$model_str" "$git_info" "$path_info"; do
-  [ -z "$seg" ] && continue
-  line1="${line1:+${line1}   }${seg}"
-done
+# Two rows, two jobs. Line 1 is identity -- what session you are in. Line 2 is
+# the context budget, which is what moves turn to turn, so it gets the bar and
+# the numbers.
+#
+# Groups are separated by a dim rule rather than only whitespace: at this
+# density three spaces is not enough contrast between "next field" and "next
+# group", and the rule costs one glyph. Narrow terminals drop the least
+# important group first instead of wrapping into a second visual line.
+term_cols=${COLUMNS:-0}
+case "$term_cols" in
+  '' | *[!0-9]*) term_cols=0 ;;
+esac
 
-line2=""
-for seg in "$context_bar" "$ctx_parts" "$io_parts" "$cache_str"; do
-  [ -z "$seg" ] && continue
-  line2="${line2:+${line2}   }${seg}"
-done
+join_groups() {
+  local out="" seg
+  for seg in "$@"; do
+    [ -z "$seg" ] && continue
+    out="${out:+${out}   ${sep}   }${seg}"
+  done
+  printf '%s' "$out"
+}
+
+# Visible width, ignoring ANSI escapes and counting wide characters as 2 so the
+# budget below matches what the terminal actually draws.
+vis_width() {
+  printf '%s' "$1" \
+    | sed 's/\x1b\[[0-9;]*m//g' \
+    | awk 'BEGIN{n=0} {
+        s=$0; gsub(/\x1b\[[0-9;]*m/,"",s);
+        n=0;
+        for (i=1;i<=length(s);i++) {
+          c=substr(s,i,1);
+          n += (c ~ /[\x00-\x7f]/) ? 1 : 2
+        }
+        print n
+      }'
+}
+
+# Line 1 can outgrow the terminal when the model id and the directory are both
+# long, which is the common case behind a gateway. Shed the least useful part
+# first: the directory tail keeps its last components (the ones that identify
+# the project), and the model falls back to its final path segment.
+shorten_path() {
+  local p="$1" limit="${2:-40}"
+  if [ "$(vis_width "$p")" -le "$limit" ]; then printf '%s' "$p"; return; fi
+  printf '…/%s' "${p##*/}"
+}
+
+line1=$(join_groups "$model_str" "$git_info" "$path_info")
+if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
+  path_info=$(shorten_path "$path_info" 24)
+  line1=$(join_groups "$model_str" "$git_info" "$path_info")
+fi
+if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
+  # Drop the directory: the branch already implies the repo in most sessions.
+  line1=$(join_groups "$model_str" "$git_info")
+fi
+if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
+  # Effort and thinking recede before anything identifying does.
+  model_str=$(printf '%s' "$model_str" | sed 's/ · thinking$//')
+  line1=$(join_groups "$model_str" "$git_info")
+fi
+if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
+  model_str=$(printf '%s' "$model_str" | sed 's/ · [A-Za-z]*$//')
+  line1=$(join_groups "$model_str" "$git_info")
+fi
+if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
+  # A gateway route such as "moma/deepseek-latest-flash → deepseek-v4.1-flash-1017"
+  # is now the longest field. Keep the answered model: it is the one producing
+  # tokens, and the provider half is implied by having configured it.
+  case "$model_str" in
+    *' → '*) model_str="${model_str##*→ }" ;;
+  esac
+  line1=$(join_groups "$model_str" "$git_info")
+fi
+if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
+  # Last resort: the model alone. Truncating it would mangle the very field the
+  # row exists to report, so the branch yields instead.
+  line1="$model_str"
+fi
+
+# Below ~100 columns the per-call trio is the first thing to go: it is the most
+# detailed and the least frequently consulted. Below ~80 the cache figure goes
+# too, leaving the bar and its token count.
+line2_groups=("$context_bar" "$ctx_parts")
+if [ "$term_cols" -eq 0 ] || [ "$term_cols" -ge 100 ]; then
+  line2_groups+=("$io_parts")
+fi
+if [ "$term_cols" -eq 0 ] || [ "$term_cols" -ge 80 ]; then
+  line2_groups+=("$cache_str")
+fi
+line2=$(join_groups "${line2_groups[@]}")
 
 printf '%s\n' "$line1"
 [ -n "$line2" ] && printf '%s\n' "$line2"
