@@ -49,18 +49,46 @@ faint=$'\033[2m'
 # worse than no rule at all.
 sep=$'\033[90m│\033[0m'
 
-# The per-call trio (cache / in / out) gets one muted hue per figure so the
-# group reads as a set at a glance, without the saturated primaries that glare
-# against a dark background. Label and value share a hue; the value is the
-# brighter of the two, so the word still recedes behind the number it names.
+# The per-call trio (cache / in / out) gets one hue per figure so the group reads
+# as a set at a glance, without the saturated primaries that glare against a dark
+# background. Each hue comes in three weights, and the weight is what makes the
+# number read as a number rather than as part of a word:
+#
+#   label  the word, at roughly a third of the value's brightness -- present but
+#          clearly subordinate
+#   value  bold and near the top of the hue's range, so the eye lands on digits
+#   unit   the `k`, back down at label weight: it repeats identically every turn,
+#          so it should not compete with the number it qualifies
+#
 # `out` is the only warm note on the row -- it marks the one figure that is not
 # input, which is what makes the group scannable without reading the labels.
-c_cache_v=$'\033[38;2;140;198;216m'   # pale aqua
-c_cache_l=$'\033[38;2;86;134;150m'
-c_in_v=$'\033[38;2;172;180;234m'      # pale periwinkle
-c_in_l=$'\033[38;2;108;116;166m'
-c_out_v=$'\033[38;2;228;186;152m'     # pale amber
-c_out_l=$'\033[38;2;158;124;96m'
+c_cache_v=$'\033[1m\033[38;2;176;226;240m'   # aqua
+c_cache_l=$'\033[38;2;74;116;130m'
+c_in_v=$'\033[1m\033[38;2;198;204;255m'      # periwinkle
+c_in_l=$'\033[38;2;88;96;148m'
+c_out_v=$'\033[1m\033[38;2;250;212;172m'     # amber
+c_out_l=$'\033[38;2;140;106;72m'
+
+# The cumulative figure on the left of the rule stays neutral: it is the number
+# the bar above it already draws, so giving it a hue would put a fourth colour
+# on a row whose point is that the three per-call figures are the coloured ones.
+# It is still bold-and-dim pair, so it reads as a number rather than as text.
+ctx_v=$'\033[1m'
+ctx_u=$'\033[38;2;132;138;148m'
+
+# Line 1's two variable values, same treatment as the token figures: bold, in a
+# hue of their own, with their fixed companion words left dim. The branch is the
+# louder of the two -- it is the only field that changes when you switch lines of
+# work -- while the directory stays quiet enough to be read only when wanted.
+# The branch hue is a cool teal, deliberately not the bar's blue: line 1 is
+# identity, line 2 is budget, and sharing a hue would blur that split.
+c_branch_v=$'\033[1m\033[38;2;148;226;213m'   # teal
+c_clean=$'\033[38;2;110;136;132m'             # dim teal, for "clean"c_dir=$'\033[38;2;150;156;168m'               # quiet grey for the path
+
+# A shared dim neutral for the small fixed words that caption a value (`hit`,
+# `clean`, `no git`). One definition, so every caption on the row recedes by the
+# same amount instead of each picking its own grey.
+c_label=$'\033[38;2;118;124;134m'
 
 # One jq invocation for every payload field. Each separate `jq` call costs a
 # full process start (~100ms on Windows) and this script re-runs every
@@ -88,7 +116,10 @@ $(printf '%s' "$input" | jq -r '[
   ((.transcript_path // "") | gsub("\\\\"; "/")),
   (.context_window.context_window_size // ""),
   (.context_window.total_input_tokens // ""),
-  (.prompt_cache.warm // ""),
+  # NOT `// ""` here. The jq alternative operator treats `false` as empty, so
+  # `false // ""` yields "" and a cold cache would read as "field absent" --
+  # the `cold` note could never fire. Only `null` means absent for a boolean.
+  (if .prompt_cache.warm == null then "" else (.prompt_cache.warm | tostring) end),
   (.prompt_cache.hit_ratio // ""),
   (.context_window.used_percentage // ""),
   (.model.id // ""),
@@ -163,6 +194,13 @@ fi
 
 branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null)
 if [ -n "$branch" ]; then
+  # The branch name is a value, not a label: it changes as you switch branches
+  # and it is the one field on this row that says which line of work you are on.
+  # Bold plus its own hue lifts it off the row the same way the token figures are
+  # lifted on line 2 -- the row keeps one highlighting idiom instead of two.
+  # `stream` stays cool and distinct from the bar's blue so the two rows do not
+  # read as one continuous ramp.
+  branch_str="${c_branch_v}${branch}${reset}"
   # Untracked files are counted too. `git diff --shortstat HEAD` ignores them,
   # so a project whose new files are not yet added showed +0/-0 while plainly
   # having changes -- indistinguishable from a clean tree. numstat lists
@@ -176,14 +214,14 @@ if [ -n "$branch" ]; then
     '' | *[!0-9]*) untracked=0 ;;
   esac
   if [ "$untracked" -gt 0 ]; then
-    git_info="${branch} ${green}+${added}${reset}/${red}-${deleted}${reset} ${yellow}?${untracked}${reset}"
+    git_info="${branch_str} ${green}+${added}${reset}/${red}-${deleted}${reset} ${yellow}?${untracked}${reset}"
   elif [ "$added" -eq 0 ] && [ "$deleted" -eq 0 ]; then
-    git_info="${branch} clean"
+    git_info="${branch_str} ${c_clean}clean${reset}"
   else
-    git_info="${branch} ${green}+${added}${reset}/${red}-${deleted}${reset}"
+    git_info="${branch_str} ${green}+${added}${reset}/${red}-${deleted}${reset}"
   fi
 else
-  git_info="no git"
+  git_info="${c_clean}no git${reset}"
 fi
 
 # Project directory, shown relative to $HOME as ~/... when it lives there.
@@ -203,8 +241,7 @@ case "$cwd_posix" in
   "$home_posix"/*) dir_disp="~${cwd_posix#"$home_posix"}" ;;
   *)               dir_disp="$cwd" ;;
 esac
-path_info="${dir_disp}"
-
+path_info="${c_dir}${dir_disp}${reset}"
 # --- Context budget --------------------------------------------------------
 # Claude Code's .context_window.context_window_size comes from its model
 # catalog, not from your proxy config: the claude-opus-5 entry declares a 1M
@@ -246,7 +283,7 @@ bar_empty=$(( 20 - bar_filled ))
 # high usage reads as heat even before you parse the percentage; what changes is
 # how loud the journey is.
 #
-#   sky      pale sky -> light blue -> azure -> marine  (default)
+#   sky      ice -> pale azure -> airy blue, light at every fill level (default)
 #   rose     pale pink -> rose -> cherry -> crimson
 #   plasma   cyan -> violet -> magenta -> rose
 #   aurora   mint -> sky -> indigo -> orchid
@@ -256,7 +293,7 @@ bar_empty=$(( 20 - bar_filled ))
 #   slate    grey -> near white, monochrome
 bar_theme=${CLAUDE_BAR:-sky}
 case "$bar_theme" in
-  sky)    stops=(196 231 252  129 199 245  66 165 245  24 128 208  16 82 150) ;;   # pale ice->azure->marine
+  sky)    stops=(226 244 254  199 232 253  167 217 252  135 200 249  104 180 243) ;;   # ice->pale azure->airy blue
   rose)   stops=(255 182 213  251 113 133  244 63 94  220 38 60  153 27 27) ;;
   plasma) stops=(34 211 238  99 102 241  168 85 247  236 72 153) ;;   # cyan->violet->magenta->rose
   aurora) stops=(52 211 153  56 189 248  79 70 229  232 121 249) ;;   # mint->sky->indigo->orchid
@@ -264,7 +301,7 @@ case "$bar_theme" in
   neon)   stops=(163 230 53  34 211 238  139 92 246  255 0 128) ;;    # lime->cyan->violet->hotpink
   sage)   stops=(120 160 106 156 168 96 214 176 84 198 118 74 168 74 72) ;;
   slate)  stops=(110 118 128 156 164 174 208 212 218) ;;
-  *)      stops=(196 231 252  129 199 245  66 165 245  24 128 208  16 82 150) ;;
+  *)      stops=(226 244 254  199 232 253  167 217 252  135 200 249  104 180 243) ;;
 esac
 
 # Interpolate channel `ch` (0=R,1=G,2=B) of the stop list at `pos` (0-100).
@@ -359,23 +396,53 @@ bar_color=$'\033'"[38;2;${pct_r};${pct_g};${pct_b}m"
 # token counts, so repeating them here would just be noise.
 context_bar="${bar} ${bar_color}${used_int}%${reset}"
 
-# Prompt-cache hit rate. Higher is better, so the colour scale runs the
-# opposite way to the context bar: >=95% green, 80-95% orange, below that
-# shading to red as the hit rate falls.
+# Prompt-cache hit rate, from `.prompt_cache.hit_ratio`.
+#
+# This is a SESSION-WIDE figure, not this call's: CC keeps a ledger of every
+# main-conversation request and accumulates cacheRead / cacheCreation / input
+# tokens across them (m0494:1963, `summary()` at m0494:1983-1995), so the ratio
+# is cache_read / (cache_read + cache_creation + uncached input) over the whole
+# session. It is the field's own documented meaning ("cache_read / (cache_read
+# + cache_creation + uncached input), 0-1", m0591:111909). For a single call's
+# cache read, that is the `cache` figure to the left, which comes from
+# `current_usage.cache_read_input_tokens` and is NOT divided by anything.
+#
+# The label therefore reads `hit`, not `warm`: `warm` is a different field
+# in the same object (`.prompt_cache.warm`, a boolean for whether the cached
+# prefix is still inside its TTL right now). Call it warm and the number
+# invites exactly the wrong reading -- a temperature where a ratio belongs.
+#
+# Higher is better, so the colour scale runs the opposite way to the context
+# bar: >=95% green, 80-95% orange, below that shading to red as the rate falls.
 cache_str=""
 if [ -n "$cache_hit" ] && [ "$cache_hit" != "null" ]; then
   hit_int=$(printf '%s' "$cache_hit" | awk '{printf "%d", ($1 * 100) + 0.5}')
   case "$hit_int" in
     '' | *[!0-9]*) hit_int=0 ;;
   esac
+  # Same three-weight idiom as the token figures: the label drops to a dim
+  # neutral, the number takes the zone's colour and bold, and the `%` falls back
+  # to the label weight. An all-one-colour `hit 99%` put the word and the number
+  # at the same emphasis, which is the complaint this answers -- the number is
+  # the thing being reported, the word only names it.
   if [ "$hit_int" -ge 95 ]; then
-    cache_color=$'\033[32m'
+    cache_color=$'\033[1m\033[32m'      # green
+    cache_unit=$'\033[38;2;96;150;96m'
   elif [ "$hit_int" -ge 80 ]; then
-    cache_color=$'\033[33m'
+    cache_color=$'\033[1m\033[38;2;226;184;88m'   # amber, lifted for dark bg
+    cache_unit=$'\033[38;2;150;122;58m'
   else
-    cache_color=$'\033[31m'
+    cache_color=$'\033[1m\033[38;2;232;112;112m'  # red, lifted
+    cache_unit=$'\033[38;2;152;74;74m'
   fi
-  cache_str="${cache_color}warm ${hit_int}%${reset}"
+  cache_str="${c_label}hit${reset} ${cache_color}${hit_int}${reset}${cache_unit}%${reset}"
+  # A stale prefix is the one cache condition worth a word of its own, because
+  # the next request pays full price for the whole context. Shown beside the
+  # ratio rather than replacing it: the ratio says how the session has gone,
+  # this says what the next turn will cost.
+  if [ "$cache_warm" = "false" ]; then
+    cache_str="${cache_str} ${cache_unit}cold${reset}"
+  fi
 fi
 
 # --- Line 2: context detail -----------------------------------------------
@@ -398,12 +465,29 @@ fmt_k() {
   fi
 }
 
+# Same figure, but the number and its `k` come back in two weights, so the unit
+# reads as a suffix rather than as another digit. Callers pass the value colour
+# and the (dimmer) unit colour.
+fmt_k2() {
+  local plain digits
+  plain=$(fmt_k "$1")
+  case "$plain" in
+    *k) digits=${plain%k} ;;
+    *)  digits=$plain ;;
+  esac
+  if [ "$digits" = "$plain" ]; then
+    printf '%s%s%s' "$2" "$digits" "$reset"
+  else
+    printf '%s%s%s%s%s%s' "$2" "$digits" "$reset" "$3" "k" "$reset"
+  fi
+}
+
 ctx_parts=""
 if [ -n "$used_tokens" ] && [ "$used_tokens" != "null" ]; then
   if [ -n "$budget" ] && [ "$budget" -gt 0 ] 2>/dev/null; then
-    ctx_parts="$(fmt_k "$used_tokens")${dim}/${reset}$(fmt_k "$budget")"
+    ctx_parts="$(fmt_k2 "$used_tokens" "$ctx_v" "$ctx_u")${dim}/${reset}$(fmt_k2 "$budget" "$ctx_u" "$ctx_u")"
   else
-    ctx_parts="$(fmt_k "$used_tokens")"
+    ctx_parts="$(fmt_k2 "$used_tokens" "$ctx_v" "$ctx_u")"
   fi
 fi
 
@@ -415,19 +499,21 @@ fi
 #         context figure on the left)
 # Unlike `114.8k/400k`, none of these are cumulative.
 #
-# Labels carry their own muted hue and values a brighter one from the same
-# family, so the row scans as three coloured numbers rather than six words. The
-# units stay dim and neutral: they are the same three glyphs every time and
-# colouring them would just muddy the hues.
+# Label, value and unit carry three different weights of one hue. The gap
+# between them is what separates a number from the word next to it: the label
+# sits around a third of the value's brightness and the value is bold, so at a
+# glance the row is three coloured numbers with small captions, not a run of
+# same-weight text. The `k` goes back to label weight -- it is identical every
+# turn, so it should not compete with the digits.
 io_parts=""
 if [ -n "$cache_read_tokens" ] && [ "$cache_read_tokens" != "null" ] && [ "$cache_read_tokens" != "0" ]; then
-  io_parts="${c_cache_l}cache${reset} ${c_cache_v}$(fmt_k "$cache_read_tokens")${reset}"
+  io_parts="${c_cache_l}cache${reset} $(fmt_k2 "$cache_read_tokens" "$c_cache_v" "$c_cache_l")"
 fi
 if [ -n "$in_tokens" ] && [ "$in_tokens" != "null" ]; then
-  io_parts="${io_parts:+${io_parts}  }${c_in_l}in${reset} ${c_in_v}$(fmt_k "$in_tokens")${reset}"
+  io_parts="${io_parts:+${io_parts}  }${c_in_l}in${reset} $(fmt_k2 "$in_tokens" "$c_in_v" "$c_in_l")"
 fi
 if [ -n "$out_tokens" ] && [ "$out_tokens" != "null" ]; then
-  io_parts="${io_parts:+${io_parts}  }${c_out_l}out${reset} ${c_out_v}$(fmt_k "$out_tokens")${reset}"
+  io_parts="${io_parts:+${io_parts}  }${c_out_l}out${reset} $(fmt_k2 "$out_tokens" "$c_out_v" "$c_out_l")"
 fi
 
 # --- Output ---------------------------------------------------------------
@@ -473,15 +559,18 @@ vis_width() {
 # long, which is the common case behind a gateway. Shed the least useful part
 # first: the directory tail keeps its last components (the ones that identify
 # the project), and the model falls back to its final path segment.
+#
+# Operates on the plain text and re-applies the colour, so the escape sequence
+# never reaches the `${p##*/}` split.
 shorten_path() {
   local p="$1" limit="${2:-40}"
-  if [ "$(vis_width "$p")" -le "$limit" ]; then printf '%s' "$p"; return; fi
-  printf '…/%s' "${p##*/}"
+  if [ "$(vis_width "$p")" -le "$limit" ]; then printf '%s%s%s' "$c_dir" "$p" "$reset"; return; fi
+  printf '%s…/%s%s' "$c_dir" "${p##*/}" "$reset"
 }
 
 line1=$(join_groups "$model_str" "$git_info" "$path_info")
 if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
-  path_info=$(shorten_path "$path_info" 24)
+  path_info=$(shorten_path "$dir_disp" 24)
   line1=$(join_groups "$model_str" "$git_info" "$path_info")
 fi
 if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then

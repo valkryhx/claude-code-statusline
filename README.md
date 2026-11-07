@@ -22,7 +22,7 @@ figure on the row that is not input.)
 | Bar + `29%` | cumulative context ÷ budget (see below); the bar is a per-cell colour gradient |
 | `114.8k/400k` | same numbers in k, whole thousands without a decimal |
 | `cache 160.9k in 3.5k out 420` | **per-call** cache reads, input and output of the last response |
-| `warm 99%` | `.prompt_cache.hit_ratio` — ≥95% green, 80–95% orange, below that red |
+| `hit 99%` | `.prompt_cache.hit_ratio` — a **session-wide** cache hit rate, not this call's; ≥95% green, 80–95% amber, below that red. `cold` is appended when `.prompt_cache.warm` is false |
 
 ### Visual structure
 
@@ -35,7 +35,12 @@ Two rows, two jobs: line 1 is **identity** (what session you are in), line 2 is 
   it smears into the surrounding spaces.
 - Field labels (`cache`, `in`, `out`) sit one step darker than their values and in the
   same hue, so the row scans as three numbers instead of six words. The `k` unit is
-  uniform and `/` is dimmed.
+  uniform, takes the label weight, and `/` is dimmed.
+- Values are bold; labels and units are not. That weight split is what separates a number
+  from the word next to it, and it holds up when a terminal drops the colour.
+- On line 1 the branch is bold in a teal of its own — it is the one field that changes
+  when you switch lines of work — while the directory stays a quiet grey and `clean` is a
+  dim caption. Line 1 is identity, line 2 is budget, and the hues keep that split.
 - Empty fields drop out entirely, so a payload missing one collapses the gap rather
   than leaving a blank column.
 
@@ -91,6 +96,38 @@ So `114.8k` cannot be compared with `out 420` — different scopes. `cache`, `in
 `out` are the trio that belong together, all from one API response. `in` sums fresh
 input plus cache creation; `cache` is the read portion, which is cheap but is most of
 the prompt, which is why `in` looks small next to the cumulative figure on its left.
+
+### `hit` is a session ratio; `cache` is one call
+
+Easy to conflate, because both are about caching and both sit on the same row. They
+have different scopes:
+
+| Field | Scope | Meaning |
+| --- | --- | --- |
+| `cache 160.9k` | one API response | `current_usage.cache_read_input_tokens` — cache tokens that response was served from |
+| `hit 99%` | whole session | `prompt_cache.hit_ratio` = `cache_read / (cache_read + cache_creation + uncached input)`, accumulated over every main-conversation request |
+
+Claude Code keeps a ledger per conversation and adds each request's three token counts
+into running totals; the ratio is computed from those totals
+(`reconstructed319/deminified/m0494_0x11b3a50c.js:1963`, `summary()` at 1983–1995). The
+field's own schema comment states it the same way
+(`reconstructed319/deminified/m0591_0x11be624e.js:111909`). The ledger is cleared on
+`cd`/`hydrate`, not per turn.
+
+So a high `hit` with a small `cache` is normal: it means the session has mostly been
+served from cache even if the latest request happened to re-create a little.
+
+**The label used to read `warm`, and that was wrong.** `warm` is a *different* field in
+the same object — `.prompt_cache.warm`, a boolean for whether the cached prefix is still
+inside its TTL right now. Labelling a ratio "warm" invites reading the number as a
+temperature. The script now says `hit`, and reports the boolean separately by appending
+`cold` when the prefix has expired, since that is the condition you actually need to act
+on (the next request re-caches the whole context).
+
+One jq subtlety worth knowing if you edit the payload read: `false // ""` evaluates to
+`""`, because jq's alternative operator treats `false` as empty. Writing
+`.prompt_cache.warm // ""` silently makes the `cold` branch unreachable. The script tests
+`== null` explicitly instead.
 
 Based on [claude-hud](https://www.npmjs.com/package/claude-hud) 1.1.0 (MIT), with the
 defects fixed that are documented in
@@ -352,7 +389,7 @@ percentage. What changes is how loud the journey is.
 
 | Name | Ramp |
 | --- | --- |
-| `sky` *(default)* | pale ice → azure → marine blue: light, airy, low glare |
+| `sky` *(default)* | ice → pale azure → airy blue: light at every fill level, never heavier than a pale blue even at 95% |
 | `rose` | pale pink → rose → cherry → crimson |
 | `plasma` | cyan → violet → magenta → rose |
 | `aurora` | mint → sky → indigo → orchid |
