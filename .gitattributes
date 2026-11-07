@@ -1,0 +1,5 @@
+# LF everywhere; this is a shell script shared across Git Bash / macOS / Linux.
+* text=auto eol=lf
+
+# Keep the script executable bit meaningful and line endings stable.
+*.sh text eol=lf
