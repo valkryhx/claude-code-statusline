@@ -41,19 +41,98 @@ yellow=$'\033[33m'
 red=$'\033[31m'
 dim=$'\033[2m'
 
-jqr() { printf '%s' "$input" | jq -r "$1" 2>/dev/null; }
+# One jq invocation for every payload field. Each separate `jq` call costs a
+# full process start (~100ms on Windows) and this script re-runs every
+# refreshInterval, so the fields are read in a single pass.
+#
+# Fields are joined with \x1f (unit separator), NOT tabs: tab is shell
+# whitespace, so `read` with IFS=$'\t' collapses runs of empty fields and every
+# later variable shifts left. That silently swapped model tier and output tokens
+# whenever used_percentage was absent.
+#
+# Paths are converted inside jq rather than with `tr` afterwards, because @tsv
+# escapes a backslash as `\\` and `tr` would then produce a doubled slash.
+#
+# `cache_read_tokens` is the per-call cache-read input. It is reported because
+# `total_input_tokens` is NOT a per-call figure: CC describes it as the tokens
+# currently in the context window, cumulative. The per-call input is
+# `current_usage.input_tokens` (+ cache_creation), which is what pairs with the
+# per-call `total_output_tokens`.
+IFS=$(printf '\037') read -r model cwd effort thinking transcript cw_size used_tokens cache_warm cache_hit used_pct tier out_tokens in_tokens cache_read_tokens <<EOF
+$(printf '%s' "$input" | jq -r '[
+  (.model.display_name // ""),
+  ((.workspace.current_dir // .cwd // ".") | gsub("\\\\"; "/")),
+  (.effort.level // ""),
+  (.thinking.enabled // ""),
+  ((.transcript_path // "") | gsub("\\\\"; "/")),
+  (.context_window.context_window_size // ""),
+  (.context_window.total_input_tokens // ""),
+  (.prompt_cache.warm // ""),
+  (.prompt_cache.hit_ratio // ""),
+  (.context_window.used_percentage // ""),
+  (.model.id // ""),
+  (.context_window.total_output_tokens // ""),
+  (if .context_window.current_usage == null then ""
+   else ((.context_window.current_usage.input_tokens // 0)
+         + (.context_window.current_usage.cache_creation_input_tokens // 0))
+   end),
+  (.context_window.current_usage.cache_read_input_tokens // "")
+] | map(tostring) | join("\u001f")' 2>/dev/null)
+EOF
+[ -z "$model" ] && model="Unknown"
 
-# --- Line 1: model + git + path + context ---------------------------------
-model=$(jqr '.model.display_name // "Unknown"')
-cwd=$(jqr '.workspace.current_dir // .cwd // "."')
+# `.model.display_name` is the model Claude Code *asked for*, not the one that
+# answered. Behind a gateway, router or cc-switch the request name (e.g.
+# claude-opus-5) is rewritten upstream, so the label can name a model you are
+# not running. The transcript records both: `requestedModel` is the request,
+# `message.model` is what the API returned.
+#
+# The display shows the configured route when there is one, since that is what
+# the user set and what identifies the upstream, and the answered model when it
+# differs. Nothing here is hardcoded: the configured name comes from the
+# ANTHROPIC_DEFAULT_*_MODEL_NAME env vars that cc-switch writes, selected by
+# which tier the request belongs to.
+#
+# Cost note: reading the transcript is cheap (one tail); it rides on the git
+# bash start this script has already paid.
+answered_model=""
+if [ -n "$transcript" ] && [ -r "$transcript" ]; then
+  answered_model=$(
+    tail -n 200 "$transcript" 2>/dev/null \
+      | grep '"type":"assistant"' 2>/dev/null \
+      | tail -n 1 \
+      | grep -o '"model":"[^"]*"' 2>/dev/null \
+      | tail -n 1 \
+      | sed 's/^"model":"//; s/"$//'
+  )
+fi
 
-# Reasoning effort and extended thinking. Both are optional in the payload:
-# `effort` is absent on models without reasoning effort, `thinking` is always
-# present but only meaningful when enabled.
-effort=$(jqr '.effort.level // empty')
-thinking=$(jqr '.thinking.enabled // empty')
+# Which tier is this session running? payload .model.id is the request name,
+# e.g. claude-opus-5 -> the OPUS slot that cc-switch aliases to the real model.
+tier=$(printf '%s' "$tier" | tr 'A-Z' 'a-z')
+configured_model=""
+case "$tier" in
+  *opus*)   configured_model=$ANTHROPIC_DEFAULT_OPUS_MODEL_NAME ;;
+  *sonnet*) configured_model=$ANTHROPIC_DEFAULT_SONNET_MODEL_NAME ;;
+  *haiku*)  configured_model=$ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME ;;
+  *fable*)  configured_model=$ANTHROPIC_DEFAULT_FABLE_MODEL_NAME ;;
+esac
+[ -z "$configured_model" ] && configured_model="$ANTHROPIC_MODEL"
 
-model_str="${model}"
+# Label: configured route when known, else the answered model, else the
+# payload name. Append the answered model only when it adds information.
+if [ -n "$configured_model" ]; then
+  model_label="$configured_model"
+  if [ -n "$answered_model" ] && [ "$answered_model" != "$configured_model" ]; then
+    model_label="${model_label} → ${answered_model}"
+  fi
+elif [ -n "$answered_model" ]; then
+  model_label="$answered_model"
+else
+  model_label="$model"
+fi
+
+model_str="${model_label}"
 if [ -n "$effort" ]; then
   model_str="${model_str} · ${effort}"
 fi
@@ -74,25 +153,21 @@ else
 fi
 
 # Project directory, shown relative to $HOME as ~/... when it lives there.
-# CC sends native separators on Windows (D:\repo\x), while Git Bash's $HOME is a
-# posix path (/c/Users/...). Keep two forms: `disp` is what we print (just
-# separators normalised, drive letter intact), `posix` adds the /x drive prefix
-# so it can be compared against $HOME.
-slashify() { printf '%s' "$1" | tr '\\' '/'; }
+# `cwd` already has forward slashes (converted inside the jq pass), so only the
+# drive-letter form is needed for the $HOME comparison: Git Bash spells the home
+# dir as /c/Users/... while CC sends C:/Users/...
 to_posix() {
-  p=$(slashify "$1")
-  case "$p" in
-    [A-Za-z]:/*) printf '/%s%s' "$(printf '%s' "${p%%:*}" | tr 'A-Z' 'a-z')" "${p#?:}" ;;
-    *)           printf '%s' "$p" ;;
+  case "$1" in
+    [A-Za-z]:/*) printf '/%s%s' "$(printf '%s' "${1%%:*}" | tr 'A-Z' 'a-z')" "${1#?:}" ;;
+    *)           printf '%s' "$1" ;;
   esac
 }
-cwd_disp=$(slashify "$cwd")
 cwd_posix=$(to_posix "$cwd")
 home_posix=$(to_posix "$HOME")
 case "$cwd_posix" in
   "$home_posix")   dir_disp="~" ;;
   "$home_posix"/*) dir_disp="~${cwd_posix#"$home_posix"}" ;;
-  *)               dir_disp="$cwd_disp" ;;
+  *)               dir_disp="$cwd" ;;
 esac
 path_info="${dir_disp}"
 
@@ -104,9 +179,7 @@ path_info="${dir_disp}"
 # cc-switch pins via CLAUDE_CODE_AUTO_COMPACT_WINDOW (verified present in this
 # script's environment). Measure against that, or the bar reads 11% while a
 # third of the budget is already gone.
-cw_size=$(jqr '.context_window.context_window_size // empty')
-used_tokens=$(jqr '.context_window.total_input_tokens // empty')
-
+# cw_size / used_tokens / hit_ratio come from the single jq pass at the top.
 budget=$cw_size
 acw=$CLAUDE_CODE_AUTO_COMPACT_WINDOW
 case "$acw" in
@@ -121,7 +194,6 @@ esac
 if [ -n "$used_tokens" ] && [ -n "$budget" ] && [ "$budget" -gt 0 ] 2>/dev/null; then
   used_int=$(( (used_tokens * 100 + budget / 2) / budget ))
 else
-  used_pct=$(jqr '.context_window.used_percentage // empty')
   used_int=${used_pct%%.*}
   [ -z "$used_int" ] && used_int=0
 fi
@@ -145,115 +217,88 @@ else
   bar_color=$'\033[31m'
 fi
 
-# token counts: "<used>k/<budget>k"
-tokens_str=""
-if [ -n "$used_tokens" ] && [ -n "$budget" ] && [ "$budget" -gt 0 ] 2>/dev/null; then
-  used_k=$(printf '%d.%d' $(( used_tokens / 1000 )) $(( (used_tokens % 1000) / 100 )))
-  budget_k=$(printf '%d' $(( budget / 1000 )))
-  tokens_str=" ${used_k}k/${budget_k}k"
-elif [ -n "$used_tokens" ] && [ "$used_tokens" != "null" ]; then
-  tokens_str=$(printf ' %dk' $(( used_tokens / 1000 )))
+# The bar carries only the visual plus its percentage; line 2 spells out the
+# token counts, so repeating them here would just be noise.
+context_bar="${bar_color}${bar}${reset} ${used_int}%"
+
+# Prompt-cache hit rate. Higher is better, so the colour scale runs the
+# opposite way to the context bar: >=95% green, 80-95% orange, below that
+# shading to red as the hit rate falls.
+cache_str=""
+if [ -n "$cache_hit" ] && [ "$cache_hit" != "null" ]; then
+  hit_int=$(printf '%s' "$cache_hit" | awk '{printf "%d", ($1 * 100) + 0.5}')
+  case "$hit_int" in
+    '' | *[!0-9]*) hit_int=0 ;;
+  esac
+  if [ "$hit_int" -ge 95 ]; then
+    cache_color=$'\033[32m'
+  elif [ "$hit_int" -ge 80 ]; then
+    cache_color=$'\033[33m'
+  else
+    cache_color=$'\033[31m'
+  fi
+  cache_str="${cache_color}warm ${hit_int}%${reset}"
 fi
 
-context_bar="${bar_color}${bar}${reset} ${used_int}%${dim}${tokens_str}${reset}"
+# --- Line 2: context detail -----------------------------------------------
+# Line 1 carries identity (model, branch, directory). Line 2 carries the context
+# budget: the bar, then tokens against the budget and the last response's output.
 
-# --- Line 2: cost + reset (ccusage, cached 5 min) + cache health ----------
-cache_file="$HOME/.claude/ccusage-cache.json"
-cache_max_age=300
-
-# Portable mtime: GNU first (Git Bash / Linux), BSD second (macOS).
-get_mtime() {
-  stat -c %Y "$1" 2>/dev/null && return 0
-  stat -f %m "$1" 2>/dev/null && return 0
-  return 1
+# Token counts are shown in k, the unit people are used to for context budgets.
+# Whole thousands drop the decimal (400k, not 400.0k) and values under 1000 stay
+# raw ("out 420" reads better than "out 0.4k").
+fmt_k() {
+  case "$1" in
+    '' | *[!0-9]*) return ;;
+  esac
+  if [ "$1" -lt 1000 ]; then
+    printf '%d' "$1"
+  elif [ $(( $1 % 1000 )) -eq 0 ]; then
+    printf '%dk' $(( $1 / 1000 ))
+  else
+    printf '%d.%dk' $(( $1 / 1000 )) $(( ($1 % 1000) / 100 ))
+  fi
 }
 
-needs_refresh=1
-if [ -f "$cache_file" ]; then
-  cache_mtime=$(get_mtime "$cache_file")
-  case "$cache_mtime" in
-    ''|*[!0-9]*) needs_refresh=1 ;;
-    *)
-      now=$(date +%s)
-      if [ $(( now - cache_mtime )) -lt $cache_max_age ]; then
-        needs_refresh=0
-      fi
-      ;;
-  esac
-fi
-
-if [ "$needs_refresh" -eq 1 ]; then
-  ccusage_out=$(ccusage blocks --json 2>/dev/null)
-  if [ -n "$ccusage_out" ] && printf '%s' "$ccusage_out" | jq . >/dev/null 2>&1; then
-    printf '%s' "$ccusage_out" > "$cache_file"
-  fi
-fi
-
-if [ -f "$cache_file" ]; then
-  ccusage_out=$(cat "$cache_file")
-  active_block=$(printf '%s' "$ccusage_out" | jq -c '[.blocks[] | select(.isActive == true)] | last' 2>/dev/null)
-  if [ -z "$active_block" ] || [ "$active_block" = "null" ]; then
-    active_block=$(printf '%s' "$ccusage_out" | jq -c '.blocks | last' 2>/dev/null)
-  fi
-
-  cost_usd=$(printf '%s' "$active_block" | jq -r '.costUSD // 0' 2>/dev/null)
-  case "$cost_usd" in
-    ''|*[!0-9.]*) cost_usd=0 ;;
-  esac
-  cost_str=$(printf "\$%.2f spent" "$cost_usd")
-
-  end_time=$(printf '%s' "$active_block" | jq -r '.endTime // empty' 2>/dev/null)
-  if [ -n "$end_time" ]; then
-    end_epoch=$(date -d "${end_time}" +%s 2>/dev/null || \
-                date -jf "%Y-%m-%dT%H:%M:%S" "${end_time%%.*}" +%s 2>/dev/null || \
-                echo "0")
-    case "$end_epoch" in
-      ''|*[!0-9]*) end_epoch=0 ;;
-    esac
-    now_epoch=$(date +%s)
-    diff_secs=$(( end_epoch - now_epoch ))
-    if [ "$diff_secs" -gt 0 ]; then
-      hours=$(( diff_secs / 3600 ))
-      mins=$(( (diff_secs % 3600) / 60 ))
-      time_str="${hours}h ${mins}m until reset"
-    else
-      time_str="resetting…"
-    fi
+ctx_parts=""
+if [ -n "$used_tokens" ] && [ "$used_tokens" != "null" ]; then
+  if [ -n "$budget" ] && [ "$budget" -gt 0 ] 2>/dev/null; then
+    ctx_parts="$(fmt_k "$used_tokens")/$(fmt_k "$budget")"
   else
-    time_str="—"
+    ctx_parts="$(fmt_k "$used_tokens")"
   fi
-else
-  cost_str="—"
-  time_str="—"
 fi
 
-# Prompt-cache health (319 statusLine payload: prompt_cache.*)
-cache_health=$(jqr '.prompt_cache.warm // empty')
-hit_ratio=$(jqr '.prompt_cache.hit_ratio // empty')
-cache_str=""
-if [ -n "$cache_health" ] && [ "$cache_health" != "null" ]; then
-  if [ "$cache_health" = "true" ]; then
-    cache_str="${green}cache warm${reset}"
-  else
-    cache_str="${yellow}cache cold${reset}"
-  fi
-  if [ -n "$hit_ratio" ] && [ "$hit_ratio" != "null" ]; then
-    cache_str="${cache_str}${dim}$(printf '%s' "$hit_ratio" | awk '{printf " %.0f%%", $1*100}')${reset}"
-  fi
+# Per-call token accounting, all from `current_usage` (one API response):
+#   in    fresh input + cache creation -- what the request actually paid to send
+#   out   output of that same response
+#   read  cache reads served for that request (cheap, but it is most of the
+#         prompt, so it explains why `in` looks small next to the cumulative
+#         context figure on the left)
+# Unlike `114.8k/400k`, none of these are cumulative.
+io_parts=""
+if [ -n "$in_tokens" ] && [ "$in_tokens" != "null" ]; then
+  io_parts="in $(fmt_k "$in_tokens")"
+fi
+if [ -n "$out_tokens" ] && [ "$out_tokens" != "null" ]; then
+  io_parts="${io_parts:+${io_parts} }out $(fmt_k "$out_tokens")"
+fi
+if [ -n "$cache_read_tokens" ] && [ "$cache_read_tokens" != "null" ] && [ "$cache_read_tokens" != "0" ]; then
+  io_parts="${io_parts:+${io_parts} }cache $(fmt_k "$cache_read_tokens")"
 fi
 
 # --- Output ---------------------------------------------------------------
-# Join non-empty segments with a separator so missing fields (empty payload,
-# no git, no effort) collapse instead of leaving blank gaps.
+# Line 1 carries the identity of the session: model, branch, directory.
+# Line 2 carries the context budget -- the bar plus its numbers -- because that
+# is what changes turn to turn and deserves the room.
 line1=""
 for seg in "$model_str" "$git_info" "$path_info"; do
   [ -z "$seg" ] && continue
   line1="${line1:+${line1}   }${seg}"
 done
-line1="${line1:+${line1}   }${context_bar}"
 
 line2=""
-for seg in "$cost_str" "$time_str" "$cache_str"; do
+for seg in "$context_bar" "$ctx_parts" "$io_parts" "$cache_str"; do
   [ -z "$seg" ] && continue
   line2="${line2:+${line2}   }${seg}"
 done

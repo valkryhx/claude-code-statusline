@@ -1,31 +1,93 @@
 # claude-code-statusline
 
-A status line for [Claude Code](https://claude.ai/claude-code) showing model and
-reasoning effort, git diff, project path, context budget, spend and prompt-cache health.
+A status line for [Claude Code](https://claude.ai/claude-code): which model is actually
+answering, reasoning effort, git state, project path, and the context budget.
 
 ```
-Opus 5 · high · thinking   main +216/-22   D:/git_repos/my-project   ████████░░░░░░░░░░░░ 29% 114.8k/400k
-$10.93 spent   0h 34m until reset   warm 99%
+moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   main +216/-22   D:/git_repos/my-project
+████████░░░░░░░░░░░░ 29%   114.8k/400k   in 3.5k out 420 cache 160.9k   warm 99%
 ```
 
 | Element | Source |
 | --- | --- |
-| Model | `.model.display_name` |
+| Model | configured route (`.model.id` → `ANTHROPIC_DEFAULT_*_MODEL_NAME`) → answered model (transcript `message.model`); see below |
 | `· high` | `.effort.level` — omitted when the model reports no effort |
 | `· thinking` | `.thinking.enabled` — shown only when extended thinking is on |
 | Branch / diff | `git rev-parse` + `git diff --shortstat` |
 | Path | `.workspace.current_dir`, shortened to `~/...` when under `$HOME` |
-| Context bar | `.context_window.total_input_tokens` ÷ budget (see below) |
-| Spend | `ccusage blocks --json`, cached 5 min |
-| Reset | active block's `endTime` |
-| Cache | `.prompt_cache.warm` / `.hit_ratio` |
+| Bar + `29%` | cumulative context ÷ budget (see below) |
+| `114.8k/400k` | same numbers in k, whole thousands without a decimal |
+| `in 3.5k out 113 cache 160.9k` | **per-call** input, output and cache reads of the last response |
+| `warm 99%` | `.prompt_cache.hit_ratio` — ≥95% green, 80–95% orange, below that red |
 
 Segments are joined with three spaces and empty ones drop out entirely, so a payload
 missing a field collapses the gap instead of leaving blank columns.
 
-Based on [claude-hud](https://www.npmjs.com/package/claude-hud) 1.1.0 (MIT), with three
-defects fixed. Read [Troubleshooting](#troubleshooting) before debugging a blank status
-line — the most likely cause fails **silently**.
+### Cumulative versus per-call tokens
+
+These two figures are easy to confuse, and the payload names them ambiguously:
+
+| Field | Meaning |
+| --- | --- |
+| `context_window.total_input_tokens` | tokens **currently in the context window**, cumulative — this is what `114.8k/400k` shows |
+| `context_window.total_output_tokens` | output tokens of the **most recent response** |
+| `context_window.current_usage.input_tokens` `+ cache_creation_input_tokens` | input the **last request** actually sent |
+| `context_window.current_usage.cache_read_input_tokens` | that request's cache reads |
+
+So `114.8k` cannot be compared with `out 420` — different scopes. `in`, `out` and
+`cache` are the trio that belong together, all from one API response. `in` sums fresh
+input plus cache creation; `cache` is the read portion, which is cheap but is most of
+the prompt, explaining why `in` looks small next to the cumulative figure on its left.
+
+Based on [claude-hud](https://www.npmjs.com/package/claude-hud) 1.1.0 (MIT), with the
+defects fixed that are documented in
+[`docs/why-the-context-bar-was-wrong.md`](docs/why-the-context-bar-was-wrong.md). Read
+[Troubleshooting](#troubleshooting) before debugging a blank status line — the most
+likely cause fails **silently**.
+
+---
+
+## Which model is it really?
+
+`.model.display_name` in the statusLine payload is the model Claude Code **asked for**,
+not the one that answered. Behind a gateway, router or cc-switch the request name is
+rewritten upstream, so the payload can name a model you are not running.
+
+An observed case: the payload said `Opus 5` while every assistant message in the
+transcript was tagged `deepseek-v4.1-flash-1017`, and the proxy log showed
+`model=moma/deepseek-latest-flash request_model=claude-opus-5`.
+
+The transcript records both sides of that rewrite:
+
+| Field | Meaning |
+| --- | --- |
+| `requestedModel` | what CC sent (e.g. `claude-opus-5`) |
+| `message.model` | what the API returned (e.g. `deepseek-v4.1-flash-1017`) |
+
+The script reads `message.model` from the last assistant record via
+`.transcript_path`, and pairs it with the configured route from the
+`ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU,FABLE}_MODEL_NAME` env vars that cc-switch writes
+(the slot is chosen by `.model.id`). Nothing is hardcoded per provider:
+
+| configured env | transcript | shown |
+| --- | --- | --- |
+| `deepseek-v4.1-flash-1017` | `deepseek-v4.1-flash-1017` | `deepseek-v4.1-flash-1017` |
+| `moma/deepseek-latest-flash` | `deepseek-v4.1-flash-1017` | `moma/deepseek-latest-flash → deepseek-v4.1-flash-1017` |
+| unset | `deepseek-v4.1-flash-1017` | `deepseek-v4.1-flash-1017` |
+| unset | unreadable transcript | payload `.model.display_name` |
+
+The transcript read is one `tail` of the last 200 lines, so it adds no measurable cost.
+
+---
+
+## No ccusage, no spend
+
+An earlier version of this script shelled out to `ccusage blocks --json` for a spend
+figure and rate-limit reset timer. `ccusage` takes 3–4 seconds on a transcript this
+size, which is longer than the status line's own refresh interval, so the line stalled
+waiting on it. Both figures were removed; the second line now carries the context
+budget alone. If you want cost back, call `ccusage` from the background as described in
+the commit history rather than inline.
 
 ---
 
@@ -44,32 +106,25 @@ git --version
 bash --version      # must exist; on Windows this is Git Bash, not the WSL stub
 ```
 
-`jq` and `ccusage` may be absent — the script bootstraps jq and degrades gracefully
-without ccusage, but install both for the full display:
+`jq` is the only external dependency. Install it:
 
 ```bash
 winget install jqlang.jq          # Windows
 brew install jq                   # macOS
 sudo apt install jq               # Debian/Ubuntu
-
-npm install -g ccusage
 ```
 
-Verify — **expected: `jq` prints a version, `ccusage` resolves to a path**:
+Verify — **expected: a version string**:
 
 ```bash
 jq --version
-command -v ccusage
 ```
-
-Either may print "not found" without breaking rendering — jq is bootstrapped by the
-script and ccusage only feeds the spend/reset fields — but both are required for the
-complete display.
 
 > On Windows, `winget install jqlang.jq` adds jq to the **user** PATH, which an
 > already-running shell will not see. Verify with `where.exe jq` in PowerShell rather
 > than trusting the current shell's `which`. The script probes the WinGet Links
-> directory itself, so a missing PATH entry does not break rendering.
+> directory itself, so a missing PATH entry does not break rendering — but jq must
+> exist somewhere for anything to render.
 
 ### Step 2: Install the script
 
@@ -157,7 +212,7 @@ fail silently.
 | **B.** Blanks intermittently; `stat: File: ... Namelen: ...` and `syntax error in expression` on stderr | GNU `stat` accepts `-f` and exits 0, so the BSD-path fallback never fires | [docs §2](docs/why-the-context-bar-was-wrong.md#2-stat--f-m-swallows-the-fallback-on-gnu-systems) |
 | **C.** Percentage looks too low against your configured budget; shows 11% when ~29% is used | Bar divides by catalog `context_window_size`, not the auto-compact window | [docs §3](docs/why-the-context-bar-was-wrong.md#3-context_window_size-is-not-your-budget) |
 | **D.** `jq: command not found` in stderr, model and context fields blank | jq missing, or not on the PATH CC hands to the subprocess | [docs §1](docs/why-the-context-bar-was-wrong.md#1-the-command-silently-does-nothing-on-windows) |
-| **E.** Spend shows `—` | ccusage missing, or it produced no parseable `blocks` output | [README → Install](#step-1-verify-prerequisites) |
+| **E.** No `in` / `out` / `cache` figures | `.context_window.current_usage` is null — CC sends null before the first API response | [payload capture](#capture-the-real-payload) |
 | **F.** Nothing renders and nothing on stderr either | `settings.json` invalid, `statusLine` key wrong, or CC not restarted | [Step 4](#step-4-verify-the-json-is-still-valid) |
 | **G.** No `· high` / `· thinking` next to the model | `.effort.level` or `.thinking.enabled` absent from the payload — expected on models without reasoning effort, or with thinking off | [payload capture](#capture-the-real-payload) |
 
@@ -250,7 +305,7 @@ Behaviour with unusual values, all verified:
 ## Uninstall
 
 ```bash
-rm -f ~/.claude/statusline-command.sh ~/.claude/ccusage-cache.json
+rm -f ~/.claude/statusline-command.sh ~/.claude/ccusage-cache.json ~/.claude/statusline-probe-env.txt
 ```
 
 Then remove the `statusLine` key from `~/.claude/settings.json` — parse and rewrite the
