@@ -142,12 +142,25 @@ fi
 
 branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null)
 if [ -n "$branch" ]; then
-  diff_stats=$(git -C "$cwd" diff --shortstat HEAD 2>/dev/null)
-  added=$(printf '%s' "$diff_stats" | grep -oE '[0-9]+ insertion' | grep -oE '[0-9]+')
-  deleted=$(printf '%s' "$diff_stats" | grep -oE '[0-9]+ deletion' | grep -oE '[0-9]+')
-  [ -z "$added" ] && added=0
-  [ -z "$deleted" ] && deleted=0
-  git_info="${branch} ${green}+${added}${reset}/${red}-${deleted}${reset}"
+  # Untracked files are counted too. `git diff --shortstat HEAD` ignores them,
+  # so a project whose new files are not yet added showed +0/-0 while plainly
+  # having changes -- indistinguishable from a clean tree. numstat lists
+  # per-file line deltas; untracked files have no diff, so they are counted by
+  # number instead of by line.
+  numstat=$(git -C "$cwd" diff --numstat HEAD 2>/dev/null)
+  added=$(printf '%s\n' "$numstat" | awk '$1 ~ /^[0-9]+$/ {a += $1} END {print a + 0}')
+  deleted=$(printf '%s\n' "$numstat" | awk '$2 ~ /^[0-9]+$/ {d += $2} END {print d + 0}')
+  untracked=$(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
+  case "$untracked" in
+    '' | *[!0-9]*) untracked=0 ;;
+  esac
+  if [ "$untracked" -gt 0 ]; then
+    git_info="${branch} ${green}+${added}${reset}/${red}-${deleted}${reset} ${yellow}?${untracked}${reset}"
+  elif [ "$added" -eq 0 ] && [ "$deleted" -eq 0 ]; then
+    git_info="${branch} clean"
+  else
+    git_info="${branch} ${green}+${added}${reset}/${red}-${deleted}${reset}"
+  fi
 else
   git_info="no git"
 fi

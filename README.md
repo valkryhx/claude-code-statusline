@@ -13,7 +13,7 @@ moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   ma
 | Model | configured route (`.model.id` → `ANTHROPIC_DEFAULT_*_MODEL_NAME`) → answered model (transcript `message.model`); see below |
 | `· high` | `.effort.level` — omitted when the model reports no effort |
 | `· thinking` | `.thinking.enabled` — shown only when extended thinking is on |
-| Branch / diff | `git rev-parse` + `git diff --shortstat` |
+| Branch / diff | `git diff --numstat HEAD`, plus count of untracked files; a clean tree reads `main clean` rather than `+0/-0` |
 | Path | `.workspace.current_dir`, shortened to `~/...` when under `$HOME` |
 | Bar + `29%` | cumulative context ÷ budget (see below) |
 | `114.8k/400k` | same numbers in k, whole thousands without a decimal |
