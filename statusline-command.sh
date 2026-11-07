@@ -216,12 +216,33 @@ bar_empty=$(( 20 - bar_filled ))
 [ "$bar_empty" -lt 0 ] && bar_empty=0
 [ "$bar_filled" -gt 20 ] && bar_filled=20
 
+# Per-cell gradient. Each filled cell takes its colour from its own position
+# along the bar, so a half-full bar runs green into yellow while a nearly-full
+# one reaches red at its right edge -- the colour of the leading cell tells you
+# the level at a glance, and the trail behind it shows how you got there.
+#
+# Muted 256-colour ramp. The vivid primaries (46/226/196) glare against a dark
+# terminal; these are their desaturated neighbours, listed from low usage to
+# high: sage green -> olive -> amber -> clay -> brick.
+bar_palette=(71 107 143 179 180 221 216 215 209 203 167)
 bar=""
 i=0
-while [ "$i" -lt "$bar_filled" ]; do bar="${bar}█"; i=$((i + 1)); done
-i=0
-while [ "$i" -lt "$bar_empty" ]; do bar="${bar}░"; i=$((i + 1)); done
+while [ "$i" -lt "$bar_filled" ]; do
+  pidx=$(( i * 10 / 19 ))
+  [ "$pidx" -gt 10 ] && pidx=10
+  bar="${bar}"$'\033'"[38;5;${bar_palette[$pidx]}m█"
+  i=$((i + 1))
+done
+if [ "$bar_empty" -gt 0 ]; then
+  tail_cells=""
+  i=0
+  while [ "$i" -lt "$bar_empty" ]; do tail_cells="${tail_cells}░"; i=$((i + 1)); done
+  bar="${bar}${dim}${tail_cells}"
+fi
+bar="${bar}${reset}"
 
+# The percentage keeps the coarse level colour so the number stays legible even
+# where the gradient's last cell is still green (low usage).
 if [ "$used_int" -lt 50 ]; then
   bar_color=$'\033[32m'
 elif [ "$used_int" -lt 80 ]; then
@@ -232,7 +253,7 @@ fi
 
 # The bar carries only the visual plus its percentage; line 2 spells out the
 # token counts, so repeating them here would just be noise.
-context_bar="${bar_color}${bar}${reset} ${used_int}%"
+context_bar="${bar} ${bar_color}${used_int}%${reset}"
 
 # Prompt-cache hit rate. Higher is better, so the colour scale runs the
 # opposite way to the context bar: >=95% green, 80-95% orange, below that

@@ -15,13 +15,21 @@ moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   ma
 | `· thinking` | `.thinking.enabled` — shown only when extended thinking is on |
 | Branch / diff | `git diff --numstat HEAD`, plus count of untracked files; a clean tree reads `main clean` rather than `+0/-0` |
 | Path | `.workspace.current_dir`, shortened to `~/...` when under `$HOME` |
-| Bar + `29%` | cumulative context ÷ budget (see below) |
+| Bar + `29%` | cumulative context ÷ budget (see below); the bar is a per-cell colour gradient |
 | `114.8k/400k` | same numbers in k, whole thousands without a decimal |
 | `cache 160.9k in 3.5k out 420` | **per-call** cache reads, input and output of the last response |
 | `warm 99%` | `.prompt_cache.hit_ratio` — ≥95% green, 80–95% orange, below that red |
 
 Segments are joined with three spaces and empty ones drop out entirely, so a payload
 missing a field collapses the gap instead of leaving blank columns.
+
+The bar is a **per-cell gradient**: each filled cell takes its colour from its own
+position, so the leading cell already shows the level and the trail behind it shows how
+you got there. Colours come from a muted 256-colour ramp (sage → olive → amber → clay →
+brick) rather than the vivid primaries, which glare on a dark terminal. The percentage
+keeps a coarse green/yellow/red tint so it stays legible even when the bar is short.
+Requires a terminal that supports 256 colours; on a 16-colour terminal the gradient
+degrades to the nearest available shade.
 
 ### Cumulative versus per-call tokens
 
