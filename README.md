@@ -8,6 +8,10 @@ moma/deepseek-latest-flash → deepseek-v4.1-flash-1017 · high · thinking   �
 ████████░░░░░░░░░░░░ 29%   │   114.8k/400k   │   cache 160.9k  in 3.5k  out 420   │   warm 99%
 ```
 
+(`cache`, `in` and `out` each carry their own muted hue — aqua, periwinkle, amber —
+with the label darker than its value. `out` is the only warm note, which marks the one
+figure on the row that is not input.)
+
 | Element | Source |
 | --- | --- |
 | Model | configured route (`.model.id` → `ANTHROPIC_DEFAULT_*_MODEL_NAME`) → answered model (transcript `message.model`); see below |
@@ -29,8 +33,9 @@ Two rows, two jobs: line 1 is **identity** (what session you are in), line 2 is 
   spaces apart, "next field" and "next group" read the same; the rule costs one glyph
   and states the boundary. It is coloured `90` (bright black), not `2` (dim) — dimmed,
   it smears into the surrounding spaces.
-- Field labels (`cache`, `in`, `out`) are dim and their values stay bright, so the row
-  scans as numbers instead of words. The `k` unit is uniform and `/` is dimmed.
+- Field labels (`cache`, `in`, `out`) sit one step darker than their values and in the
+  same hue, so the row scans as three numbers instead of six words. The `k` unit is
+  uniform and `/` is dimmed.
 - Empty fields drop out entirely, so a payload missing one collapses the gap rather
   than leaving a blank column.
 
@@ -54,11 +59,22 @@ and its token count.
 
 The bar is a **per-cell gradient**: each filled cell takes its colour from its own
 position, so the leading cell already shows the level and the trail behind it shows how
-you got there. Colours come from a muted 256-colour ramp (sage → olive → amber → clay →
-brick) rather than the vivid primaries, which glare on a dark terminal. The percentage
-keeps a coarse green/yellow/red tint so it stays legible even when the bar is short.
-Requires a terminal that supports 256 colours; on a 16-colour terminal the gradient
-degrades to the nearest available shade.
+you got there. Cells are emitted in true colour (`38;2;R;G;B`), interpolated between
+evenly-spaced stops, so the ramp is continuous instead of quantised to 256-colour slots
+(which banded visibly at two cells per step).
+
+The unfilled run is a **translucent metallic track**, not a flat grey block. A terminal
+has no alpha channel, so translucency is done the only way a terminal can: the light-shade
+glyph `░` fills about a quarter of the cell, letting the background read through — that
+sparse coverage *is* the transparency, and it keeps the row from weighing as heavily as a
+solid bar. Metal comes from a sheen along the track: a bright pale-blue at the leading
+edge, deepening by about 38% toward the far end so it has a direction, like light running
+off a brushed surface. The fade is deliberately shallow — a deeper one turns the unfilled
+half into a dark bar, which is what an earlier version looked like.
+
+The percentage takes the ramp's own colour at its position, lifted toward white in
+proportion to how dark that stop is, so the number stays legible at both ends of the ramp
+instead of the pale end reading bright and the dark end reading muddy.
 
 ### Cumulative versus per-call tokens
 
@@ -326,6 +342,31 @@ Full reasoning, source coordinates and verification method:
 | --- | --- |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW` | Sets the context bar's denominator when numeric, > 0, and smaller than the catalog window |
 | `CLAUDE_CODE_MAX_CONTEXT_TOKENS` | Not read by this script |
+| `CLAUDE_BAR` | Bar palette (see below); default `sky` |
+| `CLAUDE_BAR_TRACK` | Bright end of the unfilled track's sheen, as `"r;g;b"`; default `186;210;232` (pale blue) |
+
+### Palettes (`CLAUDE_BAR`)
+
+Every ramp starts cool and ends warm, so high usage reads as heat before you parse the
+percentage. What changes is how loud the journey is.
+
+| Name | Ramp |
+| --- | --- |
+| `sky` *(default)* | pale ice → azure → marine blue: light, airy, low glare |
+| `rose` | pale pink → rose → cherry → crimson |
+| `plasma` | cyan → violet → magenta → rose |
+| `aurora` | mint → sky → indigo → orchid |
+| `sage` | muted green → olive → amber → brick, the low-glare warm option |
+| `sunset` | amber → coral → rose → plum |
+| `neon` | lime → cyan → violet → hot pink |
+| `slate` | grey → near white, monochrome |
+
+```bash
+CLAUDE_BAR=sunset claude       # one run
+export CLAUDE_BAR=sunset       # or persist it in your shell profile
+```
+
+An unknown name falls back to `sky`.
 
 Behaviour with unusual values, all verified:
 

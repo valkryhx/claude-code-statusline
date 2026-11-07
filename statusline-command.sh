@@ -49,6 +49,19 @@ faint=$'\033[2m'
 # worse than no rule at all.
 sep=$'\033[90m│\033[0m'
 
+# The per-call trio (cache / in / out) gets one muted hue per figure so the
+# group reads as a set at a glance, without the saturated primaries that glare
+# against a dark background. Label and value share a hue; the value is the
+# brighter of the two, so the word still recedes behind the number it names.
+# `out` is the only warm note on the row -- it marks the one figure that is not
+# input, which is what makes the group scannable without reading the labels.
+c_cache_v=$'\033[38;2;140;198;216m'   # pale aqua
+c_cache_l=$'\033[38;2;86;134;150m'
+c_in_v=$'\033[38;2;172;180;234m'      # pale periwinkle
+c_in_l=$'\033[38;2;108;116;166m'
+c_out_v=$'\033[38;2;228;186;152m'     # pale amber
+c_out_l=$'\033[38;2;158;124;96m'
+
 # One jq invocation for every payload field. Each separate `jq` call costs a
 # full process start (~100ms on Windows) and this script re-runs every
 # refreshInterval, so the fields are read in a single pass.
@@ -224,40 +237,123 @@ bar_empty=$(( 20 - bar_filled ))
 [ "$bar_empty" -lt 0 ] && bar_empty=0
 [ "$bar_filled" -gt 20 ] && bar_filled=20
 
-# Per-cell gradient. Each filled cell takes its colour from its own position
-# along the bar, so a half-full bar runs green into yellow while a nearly-full
-# one reaches red at its right edge -- the colour of the leading cell tells you
-# the level at a glance, and the trail behind it shows how you got there.
+# Per-cell gradient, true-colour. Each filled cell interpolates between colour
+# stops by its own position along the bar, so the ramp is continuous instead of
+# quantised to a handful of 256-colour slots (which banded visibly at two cells
+# per step).
 #
-# Muted 256-colour ramp. The vivid primaries (46/226/196) glare against a dark
-# terminal; these are their desaturated neighbours, listed from low usage to
-# high: sage green -> olive -> amber -> clay -> brick.
-bar_palette=(71 107 143 179 180 221 216 215 209 203 167)
+# Palette is selectable with CLAUDE_BAR. Every ramp starts cool and ends warm so
+# high usage reads as heat even before you parse the percentage; what changes is
+# how loud the journey is.
+#
+#   sky      pale sky -> light blue -> azure -> marine  (default)
+#   rose     pale pink -> rose -> cherry -> crimson
+#   plasma   cyan -> violet -> magenta -> rose
+#   aurora   mint -> sky -> indigo -> orchid
+#   sunset   sand -> coral -> magenta -> plum
+#   neon     lime -> cyan -> electric violet -> hot pink
+#   sage     muted green -> brick, the low-glare option
+#   slate    grey -> near white, monochrome
+bar_theme=${CLAUDE_BAR:-sky}
+case "$bar_theme" in
+  sky)    stops=(196 231 252  129 199 245  66 165 245  24 128 208  16 82 150) ;;   # pale ice->azure->marine
+  rose)   stops=(255 182 213  251 113 133  244 63 94  220 38 60  153 27 27) ;;
+  plasma) stops=(34 211 238  99 102 241  168 85 247  236 72 153) ;;   # cyan->violet->magenta->rose
+  aurora) stops=(52 211 153  56 189 248  79 70 229  232 121 249) ;;   # mint->sky->indigo->orchid
+  sunset) stops=(251 191 36  251 146 60  244 63 94  192 38 211) ;;    # amber->coral->rose->plum
+  neon)   stops=(163 230 53  34 211 238  139 92 246  255 0 128) ;;    # lime->cyan->violet->hotpink
+  sage)   stops=(120 160 106 156 168 96 214 176 84 198 118 74 168 74 72) ;;
+  slate)  stops=(110 118 128 156 164 174 208 212 218) ;;
+  *)      stops=(196 231 252  129 199 245  66 165 245  24 128 208  16 82 150) ;;
+esac
+
+# Interpolate channel `ch` (0=R,1=G,2=B) of the stop list at `pos` (0-100).
+# Stops are evenly spaced; the segment index is pos*(n-1)/100 and the fraction
+# is what remains inside that segment, so pos=100 lands exactly on the last stop.
+rgb_at() {
+  local pos=$1 ch=$2
+  local n=$(( ${#stops[@]} / 3 ))
+  local seg=$(( pos * (n - 1) / 100 ))
+  [ "$seg" -ge $(( n - 1 )) ] && seg=$(( n - 2 ))
+  local lo=$(( seg * 100 / (n - 1) ))
+  local hi=$(( (seg + 1) * 100 / (n - 1) ))
+  local frac=$(( hi > lo ? (pos - lo) * 100 / (hi - lo) : 100 ))
+  [ "$frac" -lt 0 ] && frac=0
+  [ "$frac" -gt 100 ] && frac=100
+  local a=$(( stops[seg * 3 + ch] ))
+  local b=$(( stops[(seg + 1) * 3 + ch] ))
+  printf '%d' $(( a + (b - a) * frac / 100 ))
+}
+
 bar=""
 i=0
 while [ "$i" -lt "$bar_filled" ]; do
-  pidx=$(( i * 10 / 19 ))
-  [ "$pidx" -gt 10 ] && pidx=10
-  bar="${bar}"$'\033'"[38;5;${bar_palette[$pidx]}m█"
+  # Position of this cell along the *whole* bar, so a 40% bar stops at 40% of
+  # the ramp rather than always reaching the end colour.
+  cell_pos=$(( (i + 1) * 100 / 20 ))
+  bar="${bar}"$'\033'"[38;2;$(rgb_at "$cell_pos" 0);$(rgb_at "$cell_pos" 1);$(rgb_at "$cell_pos" 2)m█"
   i=$((i + 1))
 done
 if [ "$bar_empty" -gt 0 ]; then
+  # The unfilled run is a translucent metallic track.
+  #
+  # Terminals have no alpha, so translucency is done the way a terminal can: the
+  # light-shade glyph ░ fills only ~25% of the cell, letting the background read
+  # through -- that IS the transparency. The earlier ░ bar looked like noise
+  # because it paired the sparse glyph with a dim colour; the sparse glyph needs
+  # a bright ink to read as glass rather than grit.
+  #
+  # Metal comes from a sheen that runs along the track: a bright pale-blue at the
+  # leading edge (where the fill ends, as if catching light) deepening toward the
+  # far end. The blue lean keeps it in the same family as the sky ramp; the fade
+  # is shallow, so the unfilled run stays airy rather than turning into a dark bar.
+  #
+  # CLAUDE_BAR_TRACK overrides the bright end as "r;g;b".
   tail_cells=""
+  track_hi=${CLAUDE_BAR_TRACK:-186;210;232}
+  tr_hi_r=${track_hi%%;*}
+  tr_rest=${track_hi#*;}
+  tr_hi_g=${tr_rest%%;*}
+  tr_hi_b=${tr_rest#*;}
+  fade_span=$bar_empty
+  [ "$fade_span" -gt 1 ] && fade_span=$(( bar_empty - 1 ))
   i=0
-  while [ "$i" -lt "$bar_empty" ]; do tail_cells="${tail_cells}░"; i=$((i + 1)); done
-  bar="${bar}${dim}${tail_cells}"
+  while [ "$i" -lt "$bar_empty" ]; do
+    # Fall to ~62% of the bright end across the track, so the sheen has a
+    # direction without the far end going dark -- the run should stay light.
+    fade=$(( 100 - i * 38 / fade_span ))
+    tr_r=$(( tr_hi_r * fade / 100 ))
+    tr_g=$(( tr_hi_g * fade / 100 ))
+    tr_b=$(( tr_hi_b * fade / 100 ))
+    tail_cells="${tail_cells}"$'\033'"[38;2;${tr_r};${tr_g};${tr_b}m░"
+    i=$((i + 1))
+  done
+  bar="${bar}${tail_cells}"
 fi
 bar="${bar}${reset}"
 
-# The percentage keeps the coarse level colour so the number stays legible even
-# where the gradient's last cell is still green (low usage).
-if [ "$used_int" -lt 50 ]; then
-  bar_color=$'\033[32m'
-elif [ "$used_int" -lt 80 ]; then
-  bar_color=$'\033[33m'
-else
-  bar_color=$'\033[31m'
-fi
+# The percentage takes the ramp's own colour at its position, so the number and
+# the bar never disagree about which zone you are in. Lifted toward white
+# proportional to how dark the stop is, so every position ends up with roughly
+# the same legibility instead of the pale end reading bright and the red end
+# reading muddy.
+pct_pos=$used_int
+[ "$pct_pos" -gt 100 ] && pct_pos=100
+pct_r=$(rgb_at "$pct_pos" 0)
+pct_g=$(rgb_at "$pct_pos" 1)
+pct_b=$(rgb_at "$pct_pos" 2)
+# Lift = how much headroom the darkest channel has. A pale stop needs almost
+# none; the crimson end needs a lot to stay readable on a dark background.
+pct_min=$pct_r
+[ "$pct_g" -lt "$pct_min" ] && pct_min=$pct_g
+[ "$pct_b" -lt "$pct_min" ] && pct_min=$pct_b
+pct_lift=$(( 210 - pct_min ))
+[ "$pct_lift" -lt 20 ] && pct_lift=20
+[ "$pct_lift" -gt 62 ] && pct_lift=62
+pct_r=$(( pct_r + (255 - pct_r) * pct_lift / 100 ))
+pct_g=$(( pct_g + (255 - pct_g) * pct_lift / 100 ))
+pct_b=$(( pct_b + (255 - pct_b) * pct_lift / 100 ))
+bar_color=$'\033'"[38;2;${pct_r};${pct_g};${pct_b}m"
 
 # The bar carries only the visual plus its percentage; line 2 spells out the
 # token counts, so repeating them here would just be noise.
@@ -319,18 +415,19 @@ fi
 #         context figure on the left)
 # Unlike `114.8k/400k`, none of these are cumulative.
 #
-# Labels recede and values stay bright, so the row scans as numbers rather than
-# as words. The units are uniform ("k") and the labels are all three letters
-# wide except `out`, which keeps the columns from shifting as values change.
+# Labels carry their own muted hue and values a brighter one from the same
+# family, so the row scans as three coloured numbers rather than six words. The
+# units stay dim and neutral: they are the same three glyphs every time and
+# colouring them would just muddy the hues.
 io_parts=""
 if [ -n "$cache_read_tokens" ] && [ "$cache_read_tokens" != "null" ] && [ "$cache_read_tokens" != "0" ]; then
-  io_parts="${dim}cache${reset} $(fmt_k "$cache_read_tokens")"
+  io_parts="${c_cache_l}cache${reset} ${c_cache_v}$(fmt_k "$cache_read_tokens")${reset}"
 fi
 if [ -n "$in_tokens" ] && [ "$in_tokens" != "null" ]; then
-  io_parts="${io_parts:+${io_parts}  }${dim}in${reset} $(fmt_k "$in_tokens")"
+  io_parts="${io_parts:+${io_parts}  }${c_in_l}in${reset} ${c_in_v}$(fmt_k "$in_tokens")${reset}"
 fi
 if [ -n "$out_tokens" ] && [ "$out_tokens" != "null" ]; then
-  io_parts="${io_parts:+${io_parts}  }${dim}out${reset} $(fmt_k "$out_tokens")"
+  io_parts="${io_parts:+${io_parts}  }${c_out_l}out${reset} ${c_out_v}$(fmt_k "$out_tokens")${reset}"
 fi
 
 # --- Output ---------------------------------------------------------------
