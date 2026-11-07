@@ -417,6 +417,51 @@ Behaviour with unusual values, all verified:
 
 ---
 
+## Why there are no `$(...)` calls in the hot path
+
+A command substitution forks a subshell. On Windows under Git Bash a fork costs
+roughly 16 ms, measured on the development machine:
+
+```
+pure bash loop, 1000 iterations    19 ms
+100 command substitutions        1656 ms     <- 16.5 ms each
+```
+
+The first version used `$(...)` freely, the way one would on Linux. The context bar
+alone did 20 cells x 3 colour channels = 60 substitutions, and the whole script ran
+**3.1 s**. That is not a hang — Claude Code runs the status line as an async task
+(`await`s it inside `executeStatusLineCommand`, but off the render path) — but it does
+mean the line appears late and lags a keystroke-triggered refresh.
+
+The fix is to have functions assign a variable instead of printing:
+
+```bash
+rgb_at() { ...; rgb_out=$(( a + (b - a) * frac / 100 )); }   # not printf
+rgb_at "$cell_pos" 0; cell_r=$rgb_out
+```
+
+and to collapse multi-stage pipelines into one tool. Same output, **~550 ms**.
+
+Anything you add should follow the same rule: if it runs per render, no subshell for
+arithmetic, no `printf | awk`, no `sed` where parameter expansion works. Fittingly,
+`$(...)` inside `$(...)` is the worst case, since each nesting level forks again.
+
+### Two silent-failure traps in this area
+
+Both were hit while doing the above and both fail **without an error message**:
+
+**`jq --argjson` needs `-n`.** The payload is read into a variable by `input=$(cat)`, so
+stdin is already drained by the time jq starts. `jq --argjson p "$input" ...` without
+`-n` therefore reads an empty stdin, runs its filter zero times, and **exits 0 with no
+output** — every field silently blank, which renders as `Unknown`. Add `-n`
+(`jq -nr --argjson p "$input" ...`).
+
+**`//` treats `false` as empty.** `false // ""` is `""`, so `(.warm // "")` can never
+produce `"false"` and any branch keyed on it is unreachable. Test `== null` explicitly
+for booleans.
+
+---
+
 ## Uninstall
 
 ```bash
@@ -435,6 +480,24 @@ JSON, do not hand-edit. Restart Claude Code.
 | [`statusline-command.sh`](statusline-command.sh) | The script |
 | [`docs/why-the-context-bar-was-wrong.md`](docs/why-the-context-bar-was-wrong.md) | The three defects: symptoms, root cause, CC source coordinates, verification method |
 | [`LICENSE`](LICENSE) | MIT, noting the claude-hud derivation |
+
+## Performance
+
+Measured on Windows 11, Git Bash, 200 columns, a 3.8 MB transcript:
+
+| Version | Wall time per render |
+| --- | --- |
+| Upstream claude-hud (with `ccusage`) | 3.6–4.4 s |
+| First pass, ccusage removed | 3.1 s |
+| Subshell-free (current) | **~0.55 s** |
+
+The remaining cost is three `git` invocations, one `jq`, one `tail`+`awk` pair over the
+transcript tail, and interpreter startup. Those are process spawns against a file system;
+cutting further would mean dropping features, so this is the practical floor.
+
+Claude Code does not block on the status line: it runs as an async task off the render
+path (`executeStatusLineCommand` is awaited by its own caller, not by the UI loop). A
+slow script therefore shows as a late-updating line, not a frozen prompt.
 
 ## License
 

@@ -107,28 +107,31 @@ c_label=$'\033[38;2;118;124;134m'
 # currently in the context window, cumulative. The per-call input is
 # `current_usage.input_tokens` (+ cache_creation), which is what pairs with the
 # per-call `total_output_tokens`.
+  # `-n` is required: the payload arrives through --argjson, not stdin, and
+  # without it jq reads an empty stdin, runs its filter zero times, and exits 0
+  # with no output -- a silent blank rather than an error.
 IFS=$(printf '\037') read -r model cwd effort thinking transcript cw_size used_tokens cache_warm cache_hit used_pct tier out_tokens in_tokens cache_read_tokens <<EOF
-$(printf '%s' "$input" | jq -r '[
-  (.model.display_name // ""),
-  ((.workspace.current_dir // .cwd // ".") | gsub("\\\\"; "/")),
-  (.effort.level // ""),
-  (.thinking.enabled // ""),
-  ((.transcript_path // "") | gsub("\\\\"; "/")),
-  (.context_window.context_window_size // ""),
-  (.context_window.total_input_tokens // ""),
+$(jq -nr --argjson p "$input" '[
+  ($p.model.display_name // ""),
+  (($p.workspace.current_dir // $p.cwd // ".") | gsub("\\\\"; "/")),
+  ($p.effort.level // ""),
+  ($p.thinking.enabled // ""),
+  (($p.transcript_path // "") | gsub("\\\\"; "/")),
+  ($p.context_window.context_window_size // ""),
+  ($p.context_window.total_input_tokens // ""),
   # NOT `// ""` here. The jq alternative operator treats `false` as empty, so
   # `false // ""` yields "" and a cold cache would read as "field absent" --
   # the `cold` note could never fire. Only `null` means absent for a boolean.
-  (if .prompt_cache.warm == null then "" else (.prompt_cache.warm | tostring) end),
-  (.prompt_cache.hit_ratio // ""),
-  (.context_window.used_percentage // ""),
-  (.model.id // ""),
-  (.context_window.total_output_tokens // ""),
-  (if .context_window.current_usage == null then ""
-   else ((.context_window.current_usage.input_tokens // 0)
-         + (.context_window.current_usage.cache_creation_input_tokens // 0))
+  (if $p.prompt_cache.warm == null then "" else ($p.prompt_cache.warm | tostring) end),
+  ($p.prompt_cache.hit_ratio // ""),
+  ($p.context_window.used_percentage // ""),
+  ($p.model.id // ""),
+  ($p.context_window.total_output_tokens // ""),
+  (if $p.context_window.current_usage == null then ""
+   else (($p.context_window.current_usage.input_tokens // 0)
+         + ($p.context_window.current_usage.cache_creation_input_tokens // 0))
    end),
-  (.context_window.current_usage.cache_read_input_tokens // "")
+  ($p.context_window.current_usage.cache_read_input_tokens // "")
 ] | map(tostring) | join("\u001f")' 2>/dev/null)
 EOF
 [ -z "$model" ] && model="Unknown"
@@ -149,19 +152,45 @@ EOF
 # bash start this script has already paid.
 answered_model=""
 if [ -n "$transcript" ] && [ -r "$transcript" ]; then
+  # One awk instead of `tail | grep | tail | grep | tail | sed`: every stage of
+  # that pipeline was a fork, five of them for what is one backward scan. The
+  # window stays at 200 lines -- a transcript runs to tens of MB, so scanning
+  # the whole file to find a model name would cost far more than it saves.
+  # 200 lines is enough because tool results are stored by reference, not
+  # inline, so the last assistant record is always near the end.
   answered_model=$(
-    tail -n 200 "$transcript" 2>/dev/null \
-      | grep '"type":"assistant"' 2>/dev/null \
-      | tail -n 1 \
-      | grep -o '"model":"[^"]*"' 2>/dev/null \
-      | tail -n 1 \
-      | sed 's/^"model":"//; s/"$//'
+    tail -n 200 "$transcript" 2>/dev/null | awk '
+      /"type":"assistant"/ {
+        line = $0
+        while (match(line, /"model":"[^"]*"/)) {
+          last = substr(line, RSTART + 9, RLENGTH - 10)
+          line = substr(line, RSTART + RLENGTH)
+        }
+      }
+      END { print last }
+    '
   )
 fi
 
 # Which tier is this session running? payload .model.id is the request name,
 # e.g. claude-opus-5 -> the OPUS slot that cc-switch aliases to the real model.
-tier=$(printf '%s' "$tier" | tr 'A-Z' 'a-z')
+# Lowercased with bash expansion; the model id is ASCII so a byte-wise case
+# mapping is exact, and it avoids a fork.
+tier_lc=""
+if [ -n "$tier" ]; then
+  for (( ti = 0; ti < ${#tier}; ti++ )); do
+    tc=${tier:ti:1}
+    case "$tc" in
+      A) tc=a ;; B) tc=b ;; C) tc=c ;; D) tc=d ;; E) tc=e ;; F) tc=f ;;
+      G) tc=g ;; H) tc=h ;; I) tc=i ;; J) tc=j ;; K) tc=k ;; L) tc=l ;;
+      M) tc=m ;; N) tc=n ;; O) tc=o ;; P) tc=p ;; Q) tc=q ;; R) tc=r ;;
+      S) tc=s ;; T) tc=t ;; U) tc=u ;; V) tc=v ;; W) tc=w ;; X) tc=x ;;
+      Y) tc=y ;; Z) tc=z ;;
+    esac
+    tier_lc="${tier_lc}${tc}"
+  done
+fi
+tier=$tier_lc
 configured_model=""
 case "$tier" in
   *opus*)   configured_model=$ANTHROPIC_DEFAULT_OPUS_MODEL_NAME ;;
@@ -206,9 +235,18 @@ if [ -n "$branch" ]; then
   # having changes -- indistinguishable from a clean tree. numstat lists
   # per-file line deltas; untracked files have no diff, so they are counted by
   # number instead of by line.
+  #
+  # One awk yields both totals. Splitting them into separate `printf | awk`
+  # calls meant two extra forks for arithmetic on a list already in a variable;
+  # the here-string keeps the shell from forking a `printf` as well.
+  added=0
+  deleted=0
   numstat=$(git -C "$cwd" diff --numstat HEAD 2>/dev/null)
-  added=$(printf '%s\n' "$numstat" | awk '$1 ~ /^[0-9]+$/ {a += $1} END {print a + 0}')
-  deleted=$(printf '%s\n' "$numstat" | awk '$2 ~ /^[0-9]+$/ {d += $2} END {print d + 0}')
+  if [ -n "$numstat" ]; then
+    read -r added deleted <<EOF2
+$(awk '{ if ($1 ~ /^[0-9]+$/) a += $1; if ($2 ~ /^[0-9]+$/) d += $2 } END { print a + 0, d + 0 }' <<< "$numstat")
+EOF2
+  fi
   untracked=$(git -C "$cwd" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
   case "$untracked" in
     '' | *[!0-9]*) untracked=0 ;;
@@ -228,14 +266,30 @@ fi
 # `cwd` already has forward slashes (converted inside the jq pass), so only the
 # drive-letter form is needed for the $HOME comparison: Git Bash spells the home
 # dir as /c/Users/... while CC sends C:/Users/...
+# Sets `posix_out`. The drive letter is lowercased with bash parameter
+# expansion rather than `printf | tr`, which was two forks per call for one
+# character.
 to_posix() {
   case "$1" in
-    [A-Za-z]:/*) printf '/%s%s' "$(printf '%s' "${1%%:*}" | tr 'A-Z' 'a-z')" "${1#?:}" ;;
-    *)           printf '%s' "$1" ;;
+    [A-Za-z]:/*)
+      local drive=${1%%:*}
+      local rest=${1#?:}
+      local lower
+      case "$drive" in
+        A) lower=a ;; B) lower=b ;; C) lower=c ;; D) lower=d ;; E) lower=e ;;
+        F) lower=f ;; G) lower=g ;; H) lower=h ;; I) lower=i ;; J) lower=j ;;
+        K) lower=k ;; L) lower=l ;; M) lower=m ;; N) lower=n ;; O) lower=o ;;
+        P) lower=p ;; Q) lower=q ;; R) lower=r ;; S) lower=s ;; T) lower=t ;;
+        U) lower=u ;; V) lower=v ;; W) lower=w ;; X) lower=x ;; Y) lower=y ;;
+        Z) lower=z ;; *) lower=$drive ;;
+      esac
+      posix_out="/${lower}${rest}"
+      ;;
+    *) posix_out=$1 ;;
   esac
 }
-cwd_posix=$(to_posix "$cwd")
-home_posix=$(to_posix "$HOME")
+to_posix "$cwd";  cwd_posix=$posix_out
+to_posix "$HOME"; home_posix=$posix_out
 case "$cwd_posix" in
   "$home_posix")   dir_disp="~" ;;
   "$home_posix"/*) dir_disp="~${cwd_posix#"$home_posix"}" ;;
@@ -307,6 +361,12 @@ esac
 # Interpolate channel `ch` (0=R,1=G,2=B) of the stop list at `pos` (0-100).
 # Stops are evenly spaced; the segment index is pos*(n-1)/100 and the fraction
 # is what remains inside that segment, so pos=100 lands exactly on the last stop.
+#
+# Writes into `rgb_out` instead of printing, and is therefore called directly
+# rather than through `$(...)`. That matters more than it looks: a command
+# substitution forks a subshell, and on this platform a fork costs ~16 ms, so
+# the bar's 20 cells x 3 channels x one subshell each accounted for roughly a
+# third of the whole script's runtime. Assigning to a variable costs nothing.
 rgb_at() {
   local pos=$1 ch=$2
   local n=$(( ${#stops[@]} / 3 ))
@@ -319,7 +379,7 @@ rgb_at() {
   [ "$frac" -gt 100 ] && frac=100
   local a=$(( stops[seg * 3 + ch] ))
   local b=$(( stops[(seg + 1) * 3 + ch] ))
-  printf '%d' $(( a + (b - a) * frac / 100 ))
+  rgb_out=$(( a + (b - a) * frac / 100 ))
 }
 
 bar=""
@@ -328,7 +388,10 @@ while [ "$i" -lt "$bar_filled" ]; do
   # Position of this cell along the *whole* bar, so a 40% bar stops at 40% of
   # the ramp rather than always reaching the end colour.
   cell_pos=$(( (i + 1) * 100 / 20 ))
-  bar="${bar}"$'\033'"[38;2;$(rgb_at "$cell_pos" 0);$(rgb_at "$cell_pos" 1);$(rgb_at "$cell_pos" 2)m█"
+  rgb_at "$cell_pos" 0; cell_r=$rgb_out
+  rgb_at "$cell_pos" 1; cell_g=$rgb_out
+  rgb_at "$cell_pos" 2; cell_b=$rgb_out
+  bar="${bar}"$'\033'"[38;2;${cell_r};${cell_g};${cell_b}m█"
   i=$((i + 1))
 done
 if [ "$bar_empty" -gt 0 ]; then
@@ -376,9 +439,9 @@ bar="${bar}${reset}"
 # reading muddy.
 pct_pos=$used_int
 [ "$pct_pos" -gt 100 ] && pct_pos=100
-pct_r=$(rgb_at "$pct_pos" 0)
-pct_g=$(rgb_at "$pct_pos" 1)
-pct_b=$(rgb_at "$pct_pos" 2)
+rgb_at "$pct_pos" 0; pct_r=$rgb_out
+rgb_at "$pct_pos" 1; pct_g=$rgb_out
+rgb_at "$pct_pos" 2; pct_b=$rgb_out
 # Lift = how much headroom the darkest channel has. A pale stop needs almost
 # none; the crimson end needs a lot to stay readable on a dark background.
 pct_min=$pct_r
@@ -416,7 +479,17 @@ context_bar="${bar} ${bar_color}${used_int}%${reset}"
 # bar: >=95% green, 80-95% orange, below that shading to red as the rate falls.
 cache_str=""
 if [ -n "$cache_hit" ] && [ "$cache_hit" != "null" ]; then
-  hit_int=$(printf '%s' "$cache_hit" | awk '{printf "%d", ($1 * 100) + 0.5}')
+  # Round the ratio to a percentage in pure bash. It arrives as a decimal such as
+  # "0.99"; awk used to do this with one fork per render, which is worth avoiding
+  # for arithmetic this simple. Strip any exponent/sign oddly-typed values might
+  # carry, then round half-up on the first two decimal places.
+  hit_scaled=${cache_hit//[!0-9.]/}
+  hit_whole=${hit_scaled%%.*}
+  hit_frac=${hit_scaled#*.}
+  [ "$hit_frac" = "$hit_scaled" ] && hit_frac=""
+  hit_frac="${hit_frac}000"
+  hit_whole=${hit_whole:-0}
+  hit_int=$(( hit_whole * 100 + 10#${hit_frac:0:2} + (10#${hit_frac:2:1} >= 5 ? 1 : 0) ))
   case "$hit_int" in
     '' | *[!0-9]*) hit_int=0 ;;
   esac
@@ -452,42 +525,50 @@ fi
 # Token counts are shown in k, the unit people are used to for context budgets.
 # Whole thousands drop the decimal (400k, not 400.0k) and values under 1000 stay
 # raw ("out 420" reads better than "out 0.4k").
+#
+# Writes to `k_out` rather than printing. These run five to eight times per
+# render, and every `$(...)` around them was a fork -- the same cost that made
+# the bar expensive (see rgb_at).
 fmt_k() {
+  k_out=""
   case "$1" in
     '' | *[!0-9]*) return ;;
   esac
   if [ "$1" -lt 1000 ]; then
-    printf '%d' "$1"
+    k_out=$1
   elif [ $(( $1 % 1000 )) -eq 0 ]; then
-    printf '%dk' $(( $1 / 1000 ))
+    k_out="$(( $1 / 1000 ))k"
   else
-    printf '%d.%dk' $(( $1 / 1000 )) $(( ($1 % 1000) / 100 ))
+    k_out="$(( $1 / 1000 )).$(( ($1 % 1000) / 100 ))k"
   fi
 }
 
 # Same figure, but the number and its `k` come back in two weights, so the unit
 # reads as a suffix rather than as another digit. Callers pass the value colour
-# and the (dimmer) unit colour.
+# and the (dimmer) unit colour. Result lands in `k2_out`.
 fmt_k2() {
   local plain digits
-  plain=$(fmt_k "$1")
+  fmt_k "$1"
+  plain=$k_out
   case "$plain" in
     *k) digits=${plain%k} ;;
     *)  digits=$plain ;;
   esac
   if [ "$digits" = "$plain" ]; then
-    printf '%s%s%s' "$2" "$digits" "$reset"
+    k2_out="$2${digits}${reset}"
   else
-    printf '%s%s%s%s%s%s' "$2" "$digits" "$reset" "$3" "k" "$reset"
+    k2_out="$2${digits}${reset}$3k${reset}"
   fi
 }
 
 ctx_parts=""
 if [ -n "$used_tokens" ] && [ "$used_tokens" != "null" ]; then
   if [ -n "$budget" ] && [ "$budget" -gt 0 ] 2>/dev/null; then
-    ctx_parts="$(fmt_k2 "$used_tokens" "$ctx_v" "$ctx_u")${dim}/${reset}$(fmt_k2 "$budget" "$ctx_u" "$ctx_u")"
+    fmt_k2 "$used_tokens" "$ctx_v" "$ctx_u"; ctx_used=$k2_out
+    fmt_k2 "$budget" "$ctx_u" "$ctx_u"; ctx_budget=$k2_out
+    ctx_parts="${ctx_used}${dim}/${reset}${ctx_budget}"
   else
-    ctx_parts="$(fmt_k2 "$used_tokens" "$ctx_v" "$ctx_u")"
+    fmt_k2 "$used_tokens" "$ctx_v" "$ctx_u"; ctx_parts=$k2_out
   fi
 fi
 
@@ -507,13 +588,16 @@ fi
 # turn, so it should not compete with the digits.
 io_parts=""
 if [ -n "$cache_read_tokens" ] && [ "$cache_read_tokens" != "null" ] && [ "$cache_read_tokens" != "0" ]; then
-  io_parts="${c_cache_l}cache${reset} $(fmt_k2 "$cache_read_tokens" "$c_cache_v" "$c_cache_l")"
+  fmt_k2 "$cache_read_tokens" "$c_cache_v" "$c_cache_l"
+  io_parts="${c_cache_l}cache${reset} ${k2_out}"
 fi
 if [ -n "$in_tokens" ] && [ "$in_tokens" != "null" ]; then
-  io_parts="${io_parts:+${io_parts}  }${c_in_l}in${reset} $(fmt_k2 "$in_tokens" "$c_in_v" "$c_in_l")"
+  fmt_k2 "$in_tokens" "$c_in_v" "$c_in_l"
+  io_parts="${io_parts:+${io_parts}  }${c_in_l}in${reset} ${k2_out}"
 fi
 if [ -n "$out_tokens" ] && [ "$out_tokens" != "null" ]; then
-  io_parts="${io_parts:+${io_parts}  }${c_out_l}out${reset} $(fmt_k2 "$out_tokens" "$c_out_v" "$c_out_l")"
+  fmt_k2 "$out_tokens" "$c_out_v" "$c_out_l"
+  io_parts="${io_parts:+${io_parts}  }${c_out_l}out${reset} ${k2_out}"
 fi
 
 # --- Output ---------------------------------------------------------------
@@ -536,23 +620,57 @@ join_groups() {
     [ -z "$seg" ] && continue
     out="${out:+${out}   ${sep}   }${seg}"
   done
-  printf '%s' "$out"
+  joined=$out
 }
 
 # Visible width, ignoring ANSI escapes and counting wide characters as 2 so the
 # budget below matches what the terminal actually draws.
+#
+# Pure bash on purpose. The obvious implementation pipes through sed + awk, which
+# is two forks per call -- and this is called up to seven times per render, each
+# time on a string that can be a few hundred bytes. At ~16 ms per fork on this
+# platform that was the single largest cost in the script, for arithmetic bash
+# does for free.
+#
+# Sets `vis_w` rather than printing, so callers do not need a command
+# substitution around it.
 vis_width() {
-  printf '%s' "$1" \
-    | sed 's/\x1b\[[0-9;]*m//g' \
-    | awk 'BEGIN{n=0} {
-        s=$0; gsub(/\x1b\[[0-9;]*m/,"",s);
-        n=0;
-        for (i=1;i<=length(s);i++) {
-          c=substr(s,i,1);
-          n += (c ~ /[\x00-\x7f]/) ? 1 : 2
-        }
-        print n
-      }'
+  local s=$1 plain="" n=0 ch width i
+  # Strip CSI ... m sequences. Everything the script emits is one of those, so a
+  # scan for ESC-[ ... final-byte is enough; no need for a general parser.
+  local len=${#s}
+  i=0
+  while [ "$i" -lt "$len" ]; do
+    ch=${s:i:1}
+    if [ "$ch" = $'\033' ] && [ "${s:i+1:1}" = "[" ]; then
+      i=$((i + 2))
+      while [ "$i" -lt "$len" ]; do
+        ch=${s:i:1}
+        i=$((i + 1))
+        case "$ch" in
+          [0-9] | ';' | '?') ;;
+          *) break ;;
+        esac
+      done
+      continue
+    fi
+    plain="${plain}${ch}"
+    i=$((i + 1))
+  done
+  # Count columns: anything outside ASCII is treated as 2 cells wide, which is
+  # right for the CJK and box-drawing glyphs this line actually contains.
+  len=${#plain}
+  i=0
+  while [ "$i" -lt "$len" ]; do
+    ch=${plain:i:1}
+    case "$ch" in
+      [[:ascii:]]) width=1 ;;
+      *) width=2 ;;
+    esac
+    n=$((n + width))
+    i=$((i + 1))
+  done
+  vis_w=$n
 }
 
 # Line 1 can outgrow the terminal when the model id and the directory are both
@@ -564,41 +682,69 @@ vis_width() {
 # never reaches the `${p##*/}` split.
 shorten_path() {
   local p="$1" limit="${2:-40}"
-  if [ "$(vis_width "$p")" -le "$limit" ]; then printf '%s%s%s' "$c_dir" "$p" "$reset"; return; fi
-  printf '%s…/%s%s' "$c_dir" "${p##*/}" "$reset"
+  vis_width "$p"
+  if [ "$vis_w" -le "$limit" ]; then shortened="${c_dir}${p}${reset}"; return; fi
+  shortened="${c_dir}…/${p##*/}${reset}"
 }
 
-line1=$(join_groups "$model_str" "$git_info" "$path_info")
-if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
-  path_info=$(shorten_path "$dir_disp" 24)
-  line1=$(join_groups "$model_str" "$git_info" "$path_info")
+join_groups "$model_str" "$git_info" "$path_info"
+line1=$joined
+if [ "$term_cols" -gt 0 ]; then
+  vis_width "$line1"
+  if [ "$vis_w" -gt "$term_cols" ]; then
+    shorten_path "$dir_disp" 24
+    path_info=$shortened
+    join_groups "$model_str" "$git_info" "$path_info"
+    line1=$joined
+  fi
 fi
-if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
-  # Drop the directory: the branch already implies the repo in most sessions.
-  line1=$(join_groups "$model_str" "$git_info")
+if [ "$term_cols" -gt 0 ]; then
+  vis_width "$line1"
+  if [ "$vis_w" -gt "$term_cols" ]; then
+    # Drop the directory: the branch already implies the repo in most sessions.
+    join_groups "$model_str" "$git_info"
+    line1=$joined
+  fi
 fi
-if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
-  # Effort and thinking recede before anything identifying does.
-  model_str=$(printf '%s' "$model_str" | sed 's/ · thinking$//')
-  line1=$(join_groups "$model_str" "$git_info")
+if [ "$term_cols" -gt 0 ]; then
+  vis_width "$line1"
+  if [ "$vis_w" -gt "$term_cols" ]; then
+    # Effort and thinking recede before anything identifying does.
+    model_str=${model_str% · thinking}
+    join_groups "$model_str" "$git_info"
+    line1=$joined
+  fi
 fi
-if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
-  model_str=$(printf '%s' "$model_str" | sed 's/ · [A-Za-z]*$//')
-  line1=$(join_groups "$model_str" "$git_info")
+if [ "$term_cols" -gt 0 ]; then
+  vis_width "$line1"
+  if [ "$vis_w" -gt "$term_cols" ]; then
+    model_str=${model_str% · high}
+    model_str=${model_str% · medium}
+    model_str=${model_str% · low}
+    join_groups "$model_str" "$git_info"
+    line1=$joined
+  fi
 fi
-if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
-  # A gateway route such as "moma/deepseek-latest-flash → deepseek-v4.1-flash-1017"
-  # is now the longest field. Keep the answered model: it is the one producing
-  # tokens, and the provider half is implied by having configured it.
-  case "$model_str" in
-    *' → '*) model_str="${model_str##*→ }" ;;
-  esac
-  line1=$(join_groups "$model_str" "$git_info")
+if [ "$term_cols" -gt 0 ]; then
+  vis_width "$line1"
+  if [ "$vis_w" -gt "$term_cols" ]; then
+    # A gateway route such as "moma/deepseek-latest-flash → deepseek-v4.1-flash-1017"
+    # is now the longest field. Keep the answered model: it is the one producing
+    # tokens, and the provider half is implied by having configured it.
+    case "$model_str" in
+      *' → '*) model_str="${model_str##*→ }" ;;
+    esac
+    join_groups "$model_str" "$git_info"
+    line1=$joined
+  fi
 fi
-if [ "$term_cols" -gt 0 ] && [ "$(vis_width "$line1")" -gt "$term_cols" ]; then
-  # Last resort: the model alone. Truncating it would mangle the very field the
-  # row exists to report, so the branch yields instead.
-  line1="$model_str"
+if [ "$term_cols" -gt 0 ]; then
+  vis_width "$line1"
+  if [ "$vis_w" -gt "$term_cols" ]; then
+    # Last resort: the model alone. Truncating it would mangle the very field the
+    # row exists to report, so the branch yields instead.
+    line1="$model_str"
+  fi
 fi
 
 # Below ~100 columns the per-call trio is the first thing to go: it is the most
@@ -611,7 +757,8 @@ fi
 if [ "$term_cols" -eq 0 ] || [ "$term_cols" -ge 80 ]; then
   line2_groups+=("$cache_str")
 fi
-line2=$(join_groups "${line2_groups[@]}")
+join_groups "${line2_groups[@]}"
+line2=$joined
 
 printf '%s\n' "$line1"
 [ -n "$line2" ] && printf '%s\n' "$line2"
